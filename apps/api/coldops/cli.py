@@ -678,6 +678,15 @@ def cmd_env_example(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_knowledge(args: argparse.Namespace) -> int:
+    """Write docs/knowledge/*.md, generated from the code (programme item L)."""
+    from coldops import knowledge
+
+    for path in knowledge.write(pathlib.Path(args.output)):
+        print(f"wrote {path}", file=sys.stderr)
+    return 0
+
+
 def cmd_invariants(_: argparse.Namespace) -> int:
     """Print each safety invariant and where it is enforced."""
     rows = [
@@ -2333,6 +2342,14 @@ def main() -> int:
     sub.add_parser(
         "validate-models", help="check model routes against live catalogues"
     ).set_defaults(func=cmd_validate_models)
+    knowledge_parser = sub.add_parser(
+        "knowledge", help="regenerate the Markdown knowledge base from the code"
+    )
+    knowledge_parser.add_argument(
+        "--output", default="../../docs/knowledge", help="directory to write into"
+    )
+    knowledge_parser.set_defaults(func=cmd_knowledge)
+
     env_parser = sub.add_parser("env-example", help="regenerate .env.example")
     env_parser.add_argument("-o", "--output", help="write to a file instead of stdout")
     env_parser.set_defaults(func=cmd_env_example)

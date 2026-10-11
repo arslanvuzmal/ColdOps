@@ -842,6 +842,27 @@ def test_the_env_example_is_regenerated() -> None:
     )
 
 
+def test_the_knowledge_base_is_regenerated() -> None:
+    """docs/knowledge is generated from the code; this says when it is stale.
+
+    Programme item L: what ColdOps knows, in readable form. A hand-kept copy
+    drifts from what the system does, so it is generated and checked. Regenerate:
+    ``cd apps/api && python -m coldops.cli knowledge --output ../../docs/knowledge``
+    """
+    from coldops import knowledge
+
+    folder = REPO / "docs" / "knowledge"
+    if not folder.exists():
+        pytest.skip("no knowledge base in this tree")
+    stale = [
+        name
+        for name, content in knowledge.render_all().items()
+        if not (folder / name).exists()
+        or (folder / name).read_text(encoding="utf-8").replace("\r\n", "\n") != content
+    ]
+    assert not stale, f"docs/knowledge is out of date with the code: {stale}"
+
+
 def test_the_browser_worker_gets_no_application_credentials() -> None:
     """Invariant 3, at the deployment layer.
 
