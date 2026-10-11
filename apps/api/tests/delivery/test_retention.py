@@ -259,3 +259,26 @@ async def test_an_inbound_message_can_be_erased_but_not_otherwise_changed(
         {"id": row_id},
     )
     await db_session.commit()
+
+
+async def test_each_pass_moves_on_to_leads_not_yet_erased(db_session, workspace):
+    """Found live on 12 Oct 2026: every hourly pass examined the same 200 leads
+    -- the first 200 by id, erased long before -- and erased nothing, so
+    retention had stalled after its first batch. A pass must take leads that
+    still hold something to erase."""
+    first_lead = await build_sendable(db_session, workspace, suffix="batch-a")
+    second_lead = await build_sendable(db_session, workspace, suffix="batch-b")
+    await _send(db_session, first_lead, LONG_AGO)
+    await _send(db_session, second_lead, LONG_AGO)
+
+    one = await erase_expired(db_session, workspace_id=workspace, now=NOW, limit=1)
+    await db_session.commit()
+    two = await erase_expired(db_session, workspace_id=workspace, now=NOW, limit=1)
+    await db_session.commit()
+    three = await erase_expired(db_session, workspace_id=workspace, now=NOW, limit=1)
+    await db_session.commit()
+
+    assert one.drafts_erased == 1 and two.drafts_erased == 1
+    assert await _body_of(db_session, first_lead) == ""
+    assert await _body_of(db_session, second_lead) == ""
+    assert three.leads_examined == 0, "a finished lead was examined again"

@@ -101,6 +101,21 @@ _DUE = text(
              SELECT 1 FROM inbound_messages i
               WHERE i.lead_id = l.id
            )
+       -- Only leads with something still to erase. Without this the batch
+       -- was the first :limit leads by id for ever: once those were done every
+       -- hourly pass examined them again, erased nothing, and retention had
+       -- stalled after one batch (found 12 Oct 2026, 200 examined / 0 erased).
+       AND (
+             EXISTS (SELECT 1 FROM message_drafts d
+                      WHERE d.lead_id = l.id
+                        AND (d.body_text <> '' OR d.body_html IS NOT NULL))
+          OR EXISTS (SELECT 1 FROM messages m
+                      WHERE m.lead_id = l.id AND m.body_retained_until IS NULL)
+          OR EXISTS (SELECT 1 FROM pages p
+                       JOIN crawl_runs c ON c.id = p.crawl_run_id
+                       JOIN research_runs r ON r.id = c.research_run_id
+                      WHERE r.lead_id = l.id AND p.text_excerpt IS NOT NULL)
+           )
      ORDER BY l.id
      LIMIT :limit
     """
