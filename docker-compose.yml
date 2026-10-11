@@ -280,6 +280,12 @@ services:
 
   migrate:
     build: {context: ., dockerfile: apps/api/Dockerfile}
+    # Every setting in .env reaches the service, as in production; the
+    # anchor's values are the local overrides and win over it (compose ranks
+    # environment above env_file). Optional, so a fresh checkout still starts.
+    env_file:
+      - path: .env
+        required: false
     environment: *coldops-env
     command: ["alembic", "upgrade", "head"]
     depends_on:
@@ -288,6 +294,12 @@ services:
 
   api:
     build: {context: ., dockerfile: apps/api/Dockerfile}
+    # Every setting in .env reaches the service, as in production; the
+    # anchor's values are the local overrides and win over it (compose ranks
+    # environment above env_file). Optional, so a fresh checkout still starts.
+    env_file:
+      - path: .env
+        required: false
     environment: *coldops-env
     command: ["uvicorn", "coldops.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["${API_HOST_PORT:-8000}:8000"]
@@ -318,6 +330,12 @@ services:
   # so nothing could execute; this service is that missing registration.
   temporal-worker:
     build: {context: ., dockerfile: apps/api/Dockerfile}
+    # Every setting in .env reaches the service, as in production; the
+    # anchor's values are the local overrides and win over it (compose ranks
+    # environment above env_file). Optional, so a fresh checkout still starts.
+    env_file:
+      - path: .env
+        required: false
     environment: *coldops-env
     command: ["python", "-m", "coldops.workers.temporal_worker"]
     volumes:
@@ -349,6 +367,12 @@ services:
   # The only service holding an email provider credential.
   outbox-worker:
     build: {context: ., dockerfile: apps/api/Dockerfile}
+    # Every setting in .env reaches the service, as in production; the
+    # anchor's values are the local overrides and win over it (compose ranks
+    # environment above env_file). Optional, so a fresh checkout still starts.
+    env_file:
+      - path: .env
+        required: false
     environment: *coldops-env
     command: ["python", "-m", "coldops.workers.outbox"]
     volumes:
@@ -389,6 +413,12 @@ services:
   # Exits zero, saying so, when no mailbox is configured at all.
   inbound-worker:
     build: {context: ., dockerfile: apps/api/Dockerfile}
+    # Every setting in .env reaches the service, as in production; the
+    # anchor's values are the local overrides and win over it (compose ranks
+    # environment above env_file). Optional, so a fresh checkout still starts.
+    env_file:
+      - path: .env
+        required: false
     environment: *coldops-env
     command: ["python", "-m", "coldops.workers.inbound"]
     volumes:

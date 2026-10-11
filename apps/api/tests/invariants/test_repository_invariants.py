@@ -789,6 +789,59 @@ def test_every_production_service_reads_the_whole_env_file() -> None:
     )
 
 
+def test_every_local_service_reads_the_whole_env_file_too() -> None:
+    """The development compose closes the same gap the same way.
+
+    Its explicit list had drifted to 80 of 151 settings (10 Oct 2026): the
+    personal PDF, the placement gate, the reply reader and the test inbox
+    could all be set in ``.env`` and do nothing locally. Each service now loads
+    ``.env`` as well (optional, so a fresh checkout starts) and the anchor's
+    values stay as local overrides on top of it.
+    """
+    compose = REPO / "docker-compose.yml"
+    if not compose.exists():
+        pytest.skip("no development compose in this tree")
+    text_ = compose.read_text(encoding="utf-8")
+    missing = []
+    for service in APP_SERVICES:
+        block = re.search(
+            rf"^  {re.escape(service)}:\r?\n(.*?)(?=^  [a-z][a-z-]*:\r?\n|^[a-z])",
+            text_,
+            flags=re.M | re.S,
+        )
+        assert block, f"{service} is not in the development compose"
+        if not re.search(r"env_file:\s*\r?\n\s*- path: \.env\b", block.group(1)):
+            missing.append(service)
+    assert not missing, (
+        f"these local services do not load .env and would miss settings: {missing}"
+    )
+
+
+def test_the_env_example_is_regenerated() -> None:
+    """``.env.example`` is generated from Settings; this says when it is stale.
+
+    It was 13 settings behind on 10 Oct 2026, among them every switch added
+    that month. Regenerate with:
+    ``cd apps/api && python -m coldops.cli env-example --output ../../.env.example``
+    """
+    import argparse
+    import contextlib
+    import io
+
+    from coldops import cli
+
+    example = REPO / ".env.example"
+    if not example.exists():
+        pytest.skip("no .env.example in this tree")
+    generated = io.StringIO()
+    with contextlib.redirect_stdout(generated):
+        cli.cmd_env_example(argparse.Namespace(output=None))
+    on_disk = example.read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert on_disk == generated.getvalue(), (
+        ".env.example is out of date with coldops/config.py; regenerate it"
+    )
+
+
 def test_the_browser_worker_gets_no_application_credentials() -> None:
     """Invariant 3, at the deployment layer.
 
