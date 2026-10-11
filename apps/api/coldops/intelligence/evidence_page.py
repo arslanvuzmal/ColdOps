@@ -290,9 +290,18 @@ def render(
     token: str,
     owner_name: str,
     portfolio_url: str,
+    nonce: str = "",
 ) -> str:
     """The whole page. Self-contained: no fonts, scripts or images from anywhere
-    else, so opening it tells no third party anything."""
+    else, so opening it tells no third party anything.
+
+    ``nonce`` marks the page's one style block and one script for its
+    Content-Security-Policy (:func:`content_security_policy`). Without it a
+    policy strict enough to mean anything blocks both -- which is what
+    happened until 11 Oct 2026: every visitor saw an unstyled page with no
+    screenshots, and the beacon that grades a visit ``confirmed`` never ran.
+    """
+    mark = f' nonce="{escape(nonce, quote=True)}"' if nonce else ""
     name = escape(page.business_name)
     domain = escape(page.domain or "your website")
     if page.findings:
@@ -316,7 +325,7 @@ def render(
             f'<figure class="shots">{images}<figcaption>Your homepage as I saw it on '
             f"{captured:%d %B %Y}.</figcaption></figure>"
         )
-    beacon = f"""<script>
+    beacon = f"""<script{mark}>
 setTimeout(function(){{try{{var d=document.documentElement;
 var s=Math.round(100*(window.scrollY+window.innerHeight)/Math.max(d.scrollHeight,1));
 navigator.sendBeacon('/e/{escape(token, quote=True)}/seen',
@@ -328,7 +337,7 @@ JSON.stringify({{dwell:{BEACON_DELAY_MS // 1000},scroll:s}}));}}catch(e){{}}}},{
 <meta name="robots" content="noindex,nofollow,noarchive">
 <meta name="referrer" content="no-referrer">
 <title>What I found on {domain}</title>
-<style>
+<style{mark}>
 :root{{--bg:#f6f7f8;--fg:#15191d;--mute:#5b6570;--rule:#d9dee3;--accent:#1d5c8f;--card:#fff}}
 @media (prefers-color-scheme:dark){{:root{{--bg:#101418;--fg:#e6eaee;--mute:#9aa6b2;--rule:#2a333c;--accent:#7fb6e6;--card:#161c22}}}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--fg);
@@ -362,6 +371,22 @@ footer{{margin-top:32px;padding-top:16px;border-top:1px solid var(--rule);color:
 </main>{beacon}</body></html>"""
 
 
+def content_security_policy(nonce: str) -> str:
+    """The evidence page's own policy: its style, its script, its own images.
+
+    Images come only from this site (the screenshots are served under the
+    page's own path); the beacon posts only back to it; nothing may frame it.
+    """
+    return (
+        "default-src 'none'; "
+        f"style-src 'nonce-{nonce}'; "
+        f"script-src 'nonce-{nonce}'; "
+        "img-src 'self'; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    )
+
+
 def not_found_html() -> str:
     """Identical for a forged token and a deleted lead, so neither is an oracle."""
     return (
@@ -374,6 +399,7 @@ def not_found_html() -> str:
 
 __all__ = [
     "BEACON_DELAY_MS",
+    "content_security_policy",
     "MAX_FINDINGS",
     "SHOT_KINDS",
     "EvidencePage",

@@ -441,3 +441,44 @@ async def test_a_second_lead_for_the_same_business_sees_its_screenshot(
     assert (
         await ep.latest_shots(db_session, workspace_id=workspace, lead_id=stranger) == {}
     )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_the_page_carries_one_policy_its_own_style_and_script_satisfy(
+    db_session, workspace, routed
+) -> None:
+    """Found in a real browser on 11 Oct 2026: the site-wide policy
+    (``default-src 'none'``) was sent beside nothing of the page's own, and it
+    blocked the page's style, its screenshots and the beacon -- so no visit
+    could ever be graded ``confirmed``. A test that posts to the beacon
+    directly could not see it; this one reads what a browser is given.
+    """
+    import re
+
+    lead_id = await _with_findings(db_session, workspace)
+    token = ep.evidence_token(lead_id, SECRET)
+    r = routed.get(f"/e/{token}", headers={"user-agent": CHROME})
+    assert r.status_code == 200
+
+    policies = r.headers.get_list("content-security-policy")
+    assert len(policies) == 1, policies
+    [policy] = policies
+    nonce = re.search(r"script-src 'nonce-([^']+)'", policy).group(1)
+    assert f"style-src 'nonce-{nonce}'" in policy
+    assert "img-src 'self'" in policy and "connect-src 'self'" in policy
+    assert "frame-ancestors 'none'" in policy
+    assert f'<script nonce="{nonce}">' in r.text
+    assert f'<style nonce="{nonce}">' in r.text
+    # A fresh code per visit.
+    again = routed.get(f"/e/{token}", headers={"user-agent": CHROME})
+    assert again.headers["content-security-policy"] != policy
+
+
+def test_every_other_route_keeps_the_strict_default() -> None:
+    from coldops.api.main import app
+
+    r = TestClient(app).get("/health")
+    assert r.headers.get_list("content-security-policy") == [
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    ]

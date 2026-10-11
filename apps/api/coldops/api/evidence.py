@@ -15,6 +15,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+import secrets
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
@@ -86,13 +87,21 @@ async def show_evidence(token: str, request: Request) -> HTMLResponse:
         except Exception:
             logger.exception("could not record an evidence-page visit")
 
+    nonce = secrets.token_urlsafe(16)
     html = evidence_page.render(
         page,
         token=token,
         owner_name=settings.owner_name,
         portfolio_url=str(settings.owner_portfolio_url).rstrip("/"),
+        nonce=nonce,
     )
-    return HTMLResponse(html, headers=_HEADERS)
+    return HTMLResponse(
+        html,
+        headers={
+            **_HEADERS,
+            "Content-Security-Policy": evidence_page.content_security_policy(nonce),
+        },
+    )
 
 
 @evidence_router.post("/e/{token}/seen", include_in_schema=False)

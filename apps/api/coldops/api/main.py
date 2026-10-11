@@ -116,8 +116,14 @@ class SecurityHeadersMiddleware:
         async def send_wrapper(message: Any) -> None:
             if message["type"] == "http.response.start":
                 headers = message.setdefault("headers", [])
+                # A route that set its own header keeps it: browsers enforce
+                # every Content-Security-Policy sent, so appending this default
+                # beside the evidence page's own policy blocked the page's
+                # style, screenshots and beacon outright.
+                present = {bytes(k).lower() for k, _ in headers}
                 for key, value in _SECURITY_HEADERS:
-                    headers.append((key, value))
+                    if key not in present:
+                        headers.append((key, value))
                 if secure:
                     headers.append((b"strict-transport-security", _HSTS))
             await send(message)
