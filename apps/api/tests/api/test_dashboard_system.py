@@ -18,10 +18,10 @@ async def _token(client, workspace) -> str:  # noqa: F811
 
 @pytest.mark.asyncio
 async def test_the_system_page_answers_every_section(
-    client,
+    client,  # noqa: F811
     db_session,
     workspace,
-    monkeypatch,  # noqa: F811
+    monkeypatch,
 ):  # noqa: F811, RUF100
     await build_sendable(db_session, workspace)
 
