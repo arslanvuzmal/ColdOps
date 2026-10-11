@@ -689,6 +689,67 @@ export interface LeadFilters {
   offset?: number;
 }
 
+// --- System page -----------------------------------------------------------
+export type MailboxReadiness = {
+  address: string;
+  switched_on: boolean;
+  inbox: number;
+  probes: number;
+  days_measured: number;
+  ramp_day: number;
+  cold_limit_today: number;
+  daily_limit: number;
+  problems: string[];
+  ready: boolean;
+};
+
+export type Readiness = {
+  bar: string;
+  mailboxes: MailboxReadiness[];
+  ready: number;
+  queued: number;
+  queued_stale: number;
+  approved: number;
+  approved_stale: number;
+  stale_days: number;
+  blockers: string[];
+  notes: string[];
+  earliest: string | null;
+};
+
+export type ScheduledJob = {
+  name: string;
+  workflow: string;
+  note: string | null;
+  paused: boolean;
+  last_run: string | null;
+  next_run: string | null;
+};
+
+export type MlModel = {
+  name: string;
+  version: string;
+  status: string;
+  promoted_at: string | null;
+  predictions_7d: number;
+  predictions_total: number;
+};
+
+export type SystemStatus = {
+  checked_at: string;
+  readiness: Readiness;
+  schedules: { reachable: boolean; error: string | null; schedules: ScheduledJob[] };
+  models: MlModel[];
+  labels_total: number;
+  pdfs: {
+    enabled: boolean;
+    rendered_total: number | null;
+    rendered_7d: number | null;
+    attached_7d: number;
+    first_emails_7d: number;
+  };
+};
+
 export const api = {
   // --- unauthenticated -----------------------------------------------------
   preflight: () => call<SendingPreflight>('/ops/sending-preflight'),
@@ -805,6 +866,7 @@ export const api = {
     call<DashboardMailboxes>('/api/v1/dashboard/mailboxes', { token: t }),
   activity: (t: string, kind?: string, before?: string) =>
     call<ActivityEvent[]>(`/api/v1/dashboard/activity${query({ kind, before, limit: 100 })}`, { token: t }),
+  system: (t: string) => call<SystemStatus>('/api/v1/dashboard/system', { token: t }),
 
   // --- reply desk ----------------------------------------------------------
   replies: (t: string) => call<DeskReply[]>('/api/v1/reply-desk', { token: t }),

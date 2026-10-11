@@ -29,6 +29,7 @@ const NAV: { href: string; label: string; exact?: boolean; external?: boolean }[
   // the same origin), so this one leaves the CRM and opens in a new tab.
   { href: CALL_SHEET_URL, label: 'Calls', external: true },
   { href: '/crm/mailboxes', label: 'Mailboxes' },
+  { href: '/crm/system', label: 'System' },
   { href: '/crm/inbox', label: 'Inbox health' },
   { href: '/crm/approvals', label: 'Approvals' },
   { href: '/crm/opportunities', label: 'Opportunities' },

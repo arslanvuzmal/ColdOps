@@ -36,6 +36,7 @@ from coldops.api.placement import open_pixel_router
 from coldops.api.placement import router as placement_router
 from coldops.api.reply_desk import router as reply_desk_router
 from coldops.api.routes import router as v1_router
+from coldops.api.system import router as system_router
 from coldops.api.webhooks import router as webhooks_router
 from coldops.config import get_settings
 from coldops.db.session import dispose_engine, get_engine
@@ -212,6 +213,7 @@ app.include_router(reply_desk_router)
 app.include_router(health_router)
 # The dashboard: the whole pipeline, every mailbox, and the event stream.
 app.include_router(dashboard_router)
+app.include_router(system_router)
 # Provider delivery events. Deliberately *not* behind the session auth the two
 # routers above use: a provider cannot hold a token, so an HMAC over the raw
 # body is the credential. See coldops.api.webhooks for why that puts the whole
