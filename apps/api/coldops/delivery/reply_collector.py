@@ -332,8 +332,17 @@ class ReplyCollector:
         # A bounce is not *from* the recipient, so match on who failed. Doing
         # this before the sender lookup matters: matching a DSN on
         # MAILER-DAEMON@ would attribute it to no lead at all.
+        # Never by one of our own addresses. Mail from a mailbox, a warm-up
+        # partner or a test inbox is not a prospect writing back, and an
+        # address of ours that once stood in as a recipient -- August's
+        # Smartlead tests went to what is now the warm-up partner -- would
+        # otherwise attach every warm-up message to that lead. Found 11 Oct
+        # 2026: 17 in two days on one uk-dental-practices lead.
+        ours = await _own_addresses_anywhere(session)
         candidates = [
-            address for address in (parsed.failed_recipient, parsed.from_email) if address
+            address
+            for address in (parsed.failed_recipient, parsed.from_email)
+            if address and normalize_email(address) not in ours
         ]
         for address in candidates:
             row = (
@@ -363,6 +372,32 @@ class ReplyCollector:
                     ),
                 )
         return None
+
+
+async def _own_addresses_anywhere(session: AsyncSession) -> frozenset[str]:
+    """Every address that is ours, across workspaces: the match is unscoped too.
+
+    The same set ``inbound._own_addresses`` builds for one workspace -- sending
+    mailboxes and their reply-to, the operator, warm-up partners and placement
+    seeds -- less the inboxes named in ``COLDOPS_TEST_RECIPIENTS``, whose
+    replies the end-to-end test exists to see attributed.
+    """
+    from coldops.config import get_settings
+    from coldops.db.models import SenderIdentity
+    from coldops.delivery.inbound import _warmup_and_seed_addresses
+
+    rows = (
+        await session.execute(
+            select(SenderIdentity.from_email, SenderIdentity.reply_to_email)
+        )
+    ).all()
+    own = {normalize_email(v) for row in rows for v in row if v and v.strip()}
+    settings = get_settings()
+    if settings.operator_email:
+        own.add(normalize_email(settings.operator_email))
+    own |= {normalize_email(a) for a in _warmup_and_seed_addresses()}
+    tests = {normalize_email(r) for r in settings.test_recipients}
+    return frozenset(own - tests)
 
 
 __all__ = [
