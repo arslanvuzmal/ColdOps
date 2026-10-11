@@ -131,6 +131,30 @@ async def _export(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _export_leads(args: argparse.Namespace) -> int:
+    from coldops.db.session import workspace_unit_of_work
+    from coldops.ml import lead_features
+
+    workspace_id = await _workspace_id(args.workspace)
+    async with workspace_unit_of_work(workspace_id) as session:
+        rows = await lead_features.lead_features(session, workspace_id=workspace_id)
+    path = pathlib.Path(args.out) / "lead-features.csv"
+    written = lead_features.write_csv(rows, path)
+    crawled = sum(r.pages_crawled > 0 for r in rows)
+    with_rivals = sum(r.rivals > 0 for r in rows)
+    print(f"Wrote {written} leads to {path}")
+    print(
+        f"  {crawled} with their website read, {with_rivals} with rivals within "
+        f"{lead_features.RIVAL_RADIUS_KM:g} km"
+    )
+    print(
+        f"  labels: {sum(r.contacted for r in rows)} contacted, {sum(r.seen for r in rows)} "
+        f"seen, {sum(r.replied for r in rows)} replied, "
+        f"{sum(r.replied_positive for r in rows)} positive"
+    )
+    return 0
+
+
 def _run(coro_fn):
     def handler(args: argparse.Namespace) -> int:
         from coldops.runtime import configure_event_loop
@@ -169,6 +193,14 @@ def add_ml_parser(sub: argparse._SubParsersAction) -> None:
     export.add_argument("--out", default="site-dataset")
     export.add_argument("--min-count", type=int, default=20)
     export.set_defaults(func=_run(_export))
+
+    leads = actions.add_parser(
+        "export-lead-features",
+        help="technology + competition features and outcome labels for M3",
+    )
+    leads.add_argument("--workspace", default="titan")
+    leads.add_argument("--out", default="lead-features")
+    leads.set_defaults(func=_run(_export_leads))
 
 
 __all__ = ["add_ml_parser"]
