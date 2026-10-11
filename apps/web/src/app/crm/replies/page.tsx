@@ -181,6 +181,12 @@ function ReplyCard({ reply, onDone }: { reply: DeskReply; onDone: () => void }) 
           >
             Your answer
           </label>
+          {reply.plan_attached ? (
+            <p className="mt-1 text-xs text-emerald-700">
+              A plan (PDF) for this business is attached: what was found, how each part is fixed,
+              and the steps. It goes only if you send this answer.
+            </p>
+          ) : null}
           <input
             id={`subject-${reply.draft_id}`}
             value={subject}

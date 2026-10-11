@@ -376,6 +376,8 @@ export interface DeskReply {
   /** What the operator said they actually wanted, once they have said. */
   labelled_as?: string | null;
   status: string;
+  /** A plan (solution file) is rendered and goes with this answer. */
+  plan_attached?: boolean;
 }
 
 export interface Attachment {

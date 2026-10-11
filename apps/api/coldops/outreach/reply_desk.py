@@ -94,6 +94,9 @@ class DeskItem:
     inbound_id: uuid.UUID | None = None
     #: What the operator said they actually wanted, if they have said.
     labelled_as: str | None = None
+    #: A solution file (programme item N) is rendered and will go with this
+    #: answer when it is sent.
+    plan_attached: bool = False
 
 
 async def waiting(
@@ -153,7 +156,14 @@ async def waiting(
         items = [
             dataclasses.replace(i, labelled_as=labels.get(i.inbound_id)) for i in items
         ]
-    return items
+    from coldops.intelligence import audit_pdf
+
+    artifact_dir = get_settings().artifact_dir
+    def has_plan(draft_id: uuid.UUID) -> bool:
+        plan = audit_pdf.pdf_path(artifact_dir, draft_id)
+        return bool(plan is not None and plan.is_file())
+
+    return [dataclasses.replace(i, plan_attached=has_plan(i.draft_id)) for i in items]
 
 
 async def latest_labels(

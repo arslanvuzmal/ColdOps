@@ -18,6 +18,7 @@ announcing it.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import uuid
 from dataclasses import dataclass
@@ -192,7 +193,23 @@ async def render_audit_pdfs_now(request: RenderAuditPdfsInput) -> RenderAuditPdf
 
 @activity.defn(name="render_audit_pdfs")
 async def render_audit_pdfs(request: RenderAuditPdfsInput) -> RenderAuditPdfsResult:
-    return await render_audit_pdfs_now(request)
+    result = await render_audit_pdfs_now(request)
+    # The solution file for replies that said yes (programme item N) rides the
+    # same sweep and the same renderer. Its own feature: it runs whether or not
+    # first emails carry a PDF, and a failure here never costs the sweep.
+    try:
+        from coldops.activities.solution_file import render_solution_files
+
+        solutions = await render_solution_files(uuid.UUID(request.workspace_id))
+    except Exception:
+        logger.exception("could not render solution files")
+        return result
+    return dataclasses.replace(
+        result,
+        rendered=result.rendered + solutions.rendered,
+        refused=result.refused + solutions.refused,
+        detail=(*result.detail, *solutions.detail)[:20],
+    )
 
 
 ALL_AUDIT_PDF_ACTIVITIES = [render_audit_pdfs]

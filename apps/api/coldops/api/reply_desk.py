@@ -37,6 +37,7 @@ class DeskItemOut(BaseModel):
     ready_to_send: bool
     status: str
     labelled_as: str | None = None
+    plan_attached: bool = False
 
 
 class ReplyLabel(BaseModel):

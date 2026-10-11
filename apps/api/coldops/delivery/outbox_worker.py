@@ -91,7 +91,7 @@ from coldops.delivery.providers.base import (
     SendResult,
 )
 from coldops.delivery.suppression import is_suppressed, suppress
-from coldops.intelligence import audit_pdf, domain_health
+from coldops.intelligence import audit_pdf, domain_health, solution_file
 from coldops.intelligence.domain_health import DomainHealth, DomainWindow
 from coldops.intelligence.greeting import retimed_pair
 from coldops.intelligence.message_validator import (
@@ -857,7 +857,21 @@ class OutboxWorker:
         # recipient's own one-page check instead, and nothing else does: a
         # follow-up refers back to it. A PDF that is not rendered yet means the
         # email goes without one -- and without the sentence announcing it.
-        if self._settings.audit_pdf_enabled:
+        # A reply the operator approved to somebody who said yes carries the
+        # plan rendered for it (programme item N), if one was. No file, no
+        # attachment and no sentence about one.
+        if ctx.is_reply:
+            plan = audit_pdf.pdf_path(self._settings.artifact_dir, row.draft_id)
+            if plan is not None and plan.is_file():
+                business_name, domain = await self._business_of(session, row)
+                email = with_one_pager(
+                    email,
+                    str(plan),
+                    filename=solution_file.filename(business_name),
+                    note=solution_file.attachment_note(domain),
+                    max_bytes=solution_file.MAX_SOLUTION_BYTES,
+                )
+        elif self._settings.audit_pdf_enabled:
             first = await self._first_contact(session, row)
             if first is not None:
                 business_name, domain = first
@@ -1926,6 +1940,22 @@ class OutboxWorker:
         if found is None or found.contacted:
             return None
         return found.display_name, found.canonical_domain
+
+    @staticmethod
+    async def _business_of(
+        session: AsyncSession, row: OutboxMessage
+    ) -> tuple[str | None, str | None]:
+        found = (
+            await session.execute(
+                text(
+                    "SELECT o.display_name, o.canonical_domain FROM leads l "
+                    "JOIN organizations o ON o.id = l.organization_id "
+                    "WHERE l.id = :lead AND l.workspace_id = :ws"
+                ),
+                {"ws": row.workspace_id, "lead": row.lead_id},
+            )
+        ).first()
+        return (found[0], found[1]) if found else (None, None)
 
     @staticmethod
     def _recipient_local_time(ctx: SendContext) -> dt.datetime | None:
