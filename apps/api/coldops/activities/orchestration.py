@@ -42,20 +42,17 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio import activity
 
-from coldops.autonomy import markets, promotion
 from coldops.autonomy.actuator import (
     Actuation,
     Bounds,
     Proposal,
     effective_daily_limit,
-    effective_min_lead_score,
 )
 from coldops.autonomy.allocation import CampaignDemand, allocate
 from coldops.autonomy.allocation import explain as explain_share
 from coldops.autonomy.apply import apply_all
 from coldops.autonomy.health import CampaignHealth, CampaignWindow
 from coldops.autonomy.health import classify as classify_campaign
-from coldops.autonomy.manager import ManagedState, plan
 from coldops.config import get_settings
 from coldops.db.enums import (
     POSITIVE_REPLY_CLASSES,
@@ -65,6 +62,7 @@ from coldops.db.enums import (
     MessageState,
 )
 from coldops.db.models import (
+    AutonomyDecision,
     Campaign,
     CampaignPolicy,
     Lead,
@@ -80,14 +78,12 @@ from coldops.delivery import adaptive_limits, sender_pool
 from coldops.delivery.deliverability import ReputationWindow
 from coldops.delivery.followup_scheduler import FollowUpScheduler
 from coldops.delivery.sender_health import SenderHealth
-from coldops.intelligence.composer import VARIANT_REGISTERS
 from coldops.intelligence.fuel import (
     FuelState,
     measure_extraction_rate,
     read_fuel_state,
     research_budget,
 )
-from coldops.intelligence.insights import portfolio_view, variant_comparison
 from coldops.notify.operator import NotificationKind, record_notification
 from coldops.workflows.types import (
     CampaignCycleInput,
@@ -191,7 +187,6 @@ async def plan_campaign_cycle(request: CampaignCycleInput) -> CampaignCyclePlan:
         configured_limit = policy.daily_send_limit
         configured_score = policy.min_lead_score
         managed_limit = policy.managed_daily_send_limit
-        managed_score = policy.managed_min_lead_score
 
         # Midnight UTC, not a rolling 24 hours. The quota engine counts the same
         # way, and two components disagreeing about where "today" starts is how
@@ -225,20 +220,22 @@ async def plan_campaign_cycle(request: CampaignCycleInput) -> CampaignCyclePlan:
     # division of it possible from inside any single one.
     await _reallocate_capacity(workspace_id, now)
 
-    effective_limit, effective_score = await _run_manager(
+    effective_limit, effective_score, paused = await _run_guardian(
         workspace_id=workspace_id,
         campaign_id=campaign_id,
         status=campaign.status,
-        bounds=Bounds(
-            configured_daily_limit=configured_limit,
-            configured_min_lead_score=configured_score,
-        ),
+        configured_limit=configured_limit,
+        configured_score=configured_score,
         managed_limit=managed_limit,
-        managed_score=managed_score,
         outcomes=outcomes,
         leads_available=leads_available,
         now=now,
     )
+    if paused is not None:
+        return CampaignCyclePlan(
+            verdict=CycleVerdict.NOT_AUTHORIZED.value,
+            detail=f"paused by the guardian: {paused}",
+        )
 
     async with workspace_session(workspace_id) as session:
         remaining = max(0, effective_limit - int(spent))
@@ -731,30 +728,38 @@ async def _campaign_outcomes(
     }
 
 
-async def _run_manager(
+async def _run_guardian(
     *,
     workspace_id: uuid.UUID,
     campaign_id: uuid.UUID,
     status: CampaignStatus,
-    bounds: Bounds,
+    configured_limit: int,
+    configured_score: int,
     managed_limit: int | None,
-    managed_score: int | None,
     outcomes: dict[str, int],
     leads_available: int,
     now: dt.datetime,
-) -> tuple[int, int]:
-    """Let the manager adjust this campaign, and return what it may now use.
+) -> tuple[int, int, str | None]:
+    """Pause this campaign if its reputation crossed a hard limit (item K).
 
-    Fails soft to the *configured* values, not to the managed ones. If the
-    manager cannot run, the campaign falls back to what a human approved rather
-    than to whatever the manager last decided -- an autonomous adjustment should
-    not outlive the ability to review it.
+    Returns today's limit (the configured one, or the share the capacity
+    allocation gave it), the *configured* score bar -- the manager no longer
+    tunes it; a trained model will, once it earns it -- and the pause reason
+    when the guardian paused the campaign this cycle.
+
+    Fails soft: if the guardian cannot run, nothing is paused and the
+    configured values stand. The send gate refuses on the same signals
+    regardless, so a missed pause costs research, never a send.
     """
-    effective_limit = effective_daily_limit(bounds.configured_daily_limit, managed_limit)
-    effective_score = effective_min_lead_score(
-        bounds.configured_min_lead_score, managed_score
+    from coldops.autonomy import guardian
+    from coldops.notify.operator import (
+        NotificationKind,
+        mail_notification,
+        push_notification,
+        record_notification,
     )
 
+    effective_limit = effective_daily_limit(configured_limit, managed_limit)
     window = CampaignWindow(
         campaign_id=str(campaign_id),
         status=status,
@@ -768,51 +773,65 @@ async def _run_manager(
         replied=outcomes["replied"],
         positive_replies=outcomes["positive_replies"],
         meetings_booked=outcomes["meetings_booked"],
-        configured_limit=bounds.configured_daily_limit,
+        configured_limit=configured_limit,
         effective_limit=effective_limit,
         leads_available=leads_available,
     )
-    health = classify_campaign(window)
-    state = ManagedState(
-        campaign_id=str(campaign_id),
-        bounds=bounds,
-        managed_daily_limit=managed_limit,
-        managed_min_lead_score=managed_score,
-    )
-
     try:
-        proposals = plan(state, window)
-        if not proposals:
-            return effective_limit, effective_score
+        action = guardian.assess(window)
+        if action is None:
+            return effective_limit, configured_score, None
+        notification = None
         async with workspace_unit_of_work(workspace_id) as session:
-            verdicts = await apply_all(
+            campaign = await session.get(Campaign, campaign_id)
+            if campaign is None or campaign.status is not CampaignStatus.ACTIVE:
+                return effective_limit, configured_score, None
+            campaign.status = CampaignStatus.PAUSED
+            campaign.paused_at = now
+            session.add(
+                AutonomyDecision(
+                    workspace_id=workspace_id,
+                    campaign_id=campaign_id,
+                    decided_at=now,
+                    actuation=guardian.PAUSE,
+                    health=classify_campaign(window).value,
+                    applied=True,
+                    reason=action.reason,
+                    evidence={
+                        "signals": list(action.signals),
+                        "sent": outcomes["sent"],
+                        "delivered": outcomes["delivered"],
+                        "bounced": outcomes["bounced"],
+                        "complained": outcomes["complained"],
+                    },
+                    confidence=1.0,
+                )
+            )
+            notification = await record_notification(
                 session,
                 workspace_id=workspace_id,
-                campaign_id=campaign_id,
-                health=health,
-                proposals=proposals,
-                bounds=bounds,
+                kind=NotificationKind.DELIVERABILITY_ALERT,
+                title=f"Campaign {campaign.name} paused by the guardian",
+                description=(
+                    f"{action.reason}. Nothing more is researched or sent for it "
+                    "until you resume it in the CRM."
+                ),
+                dedupe_key=f"guardian-pause:{campaign_id}:{now:%Y-%m-%d}",
                 now=now,
             )
+        await mail_notification(notification)
+        await push_notification(notification)
+        logger.warning(
+            "guardian paused a campaign",
+            extra={"campaign_id": str(campaign_id), "reason": action.reason},
+        )
+        return effective_limit, configured_score, action.reason
     except Exception as exc:
         logger.warning(
-            "campaign manager could not run; the configured limits stand",
+            "guardian could not run; nothing was paused",
             extra={"campaign_id": str(campaign_id), "error_code": type(exc).__name__},
         )
-        return bounds.configured_daily_limit, bounds.configured_min_lead_score
-
-    for verdict in verdicts:
-        if not verdict.changes_anything:
-            continue
-        if verdict.proposal.actuation is Actuation.SET_DAILY_LIMIT:
-            effective_limit = effective_daily_limit(
-                bounds.configured_daily_limit, verdict.applied_value
-            )
-        elif verdict.proposal.actuation is Actuation.SET_MIN_LEAD_SCORE:
-            effective_score = effective_min_lead_score(
-                bounds.configured_min_lead_score, verdict.applied_value
-            )
-    return effective_limit, effective_score
+        return effective_limit, configured_score, None
 
 
 async def _health_blocked_senders(
@@ -945,15 +964,9 @@ async def _reallocate_capacity(workspace_id: uuid.UUID, now: dt.datetime) -> Non
             if not rows:
                 return
 
-            # How each market performed, once per cycle rather than per
-            # campaign: it is a property of the portfolio, and recomputing it
-            # inside the loop would ask the same question eleven times and
-            # invite eleven slightly different answers.
-            #
-            # Returns no-opinion multipliers until at least two markets clear
-            # the sample floor, so this is inert on a workspace that has not
-            # sent enough to compare anything.
-            market_weights = markets.weigh(await portfolio_view(session, now=now))
+            # Every campaign has an equal claim on the shared cap. Weighting it
+            # towards the markets that had done best was the manager learning,
+            # and that is the trained models' job now (item K).
 
             demands: list[CampaignDemand] = []
             states: dict[str, tuple[uuid.UUID, CampaignPolicy, CampaignHealth]] = {}
@@ -965,9 +978,8 @@ async def _reallocate_capacity(workspace_id: uuid.UUID, now: dt.datetime) -> Non
                 leads = await _pool_size(
                     session,
                     campaign_id=campaign.id,
-                    min_score=effective_min_lead_score(
-                        policy.min_lead_score, policy.managed_min_lead_score
-                    ),
+                    # The configured bar: the manager no longer tunes it (item K).
+                    min_score=policy.min_lead_score,
                 )
                 health = classify_campaign(
                     CampaignWindow(
@@ -994,9 +1006,7 @@ async def _reallocate_capacity(workspace_id: uuid.UUID, now: dt.datetime) -> Non
                         health=health,
                         configured_limit=policy.daily_send_limit,
                         leads_available=leads,
-                        market_multiplier=markets.multiplier_for(
-                            market_weights, campaign.region
-                        ),
+                        market_multiplier=1.0,
                     )
                 )
                 states[str(campaign.id)] = (campaign.id, policy, health)
@@ -1068,51 +1078,4 @@ async def _reallocate_capacity(workspace_id: uuid.UUID, now: dt.datetime) -> Non
                 },
             )
 
-    # ---- promotion ------------------------------------------------------
-    # A separate pass, because the loop above skips any campaign whose capacity
-    # did not move and a phrasing decision is not conditional on that.
-    #
-    # Refusals are applied too. `proposal_for` gives them `proposed == current`,
-    # so the actuator writes nothing and `apply_all` still records the row --
-    # which is what makes "every refusal to promote" readable months later. Only
-    # the case where no comparison was possible produces nothing, because the
-    # absence of a question is not a refusal to answer it.
-    for demand in demands:
-        campaign_id, policy, health = states[demand.campaign_id]
-        try:
-            async with workspace_unit_of_work(workspace_id) as session:
-                comparison = await variant_comparison(
-                    session, now=now, campaign_id=campaign_id
-                )
-                decision = promotion.decide(
-                    comparison, currently_promoted=policy.managed_promoted_variant
-                )
-                proposal = promotion.proposal_for(
-                    decision,
-                    campaign_id=demand.campaign_id,
-                    currently_promoted=policy.managed_promoted_variant,
-                    comparison=comparison,
-                )
-                if proposal is None:
-                    continue
-                await apply_all(
-                    session,
-                    workspace_id=workspace_id,
-                    campaign_id=campaign_id,
-                    health=health,
-                    proposals=[proposal],
-                    bounds=Bounds(
-                        configured_daily_limit=policy.daily_send_limit,
-                        configured_min_lead_score=policy.min_lead_score,
-                        variant_count=VARIANT_REGISTERS,
-                    ),
-                    now=now,
-                )
-        except Exception as exc:
-            logger.warning(
-                "could not decide a variant promotion",
-                extra={
-                    "campaign_id": str(campaign_id),
-                    "error_code": type(exc).__name__,
-                },
-            )
+    # No variant promotion: choosing which phrasing wins is M4's job now (item K).

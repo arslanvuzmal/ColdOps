@@ -1613,16 +1613,6 @@ async def generate_draft(request: DraftActivityInput) -> DraftActivityResult:
         # Snapshotted with the id, because the footer's opt-out link is signed
         # over this address and the session is closed before the composer runs.
         recipient_email = channel_row.value
-        # Read here rather than passed in: invariant 18 says a workflow may
-        # reference a campaign but never carry its policy, so the promoted
-        # register is looked up at execution time like every other bound.
-        policy = (
-            await session.execute(
-                select(CampaignPolicy).where(
-                    CampaignPolicy.campaign_id == uuid.UUID(request.campaign_id)
-                )
-            )
-        ).scalar_one_or_none()
         campaign_row = await session.get(Campaign, uuid.UUID(request.campaign_id))
         sender_row = (
             await session.get(SenderIdentity, campaign_row.sender_identity_id)
@@ -1849,12 +1839,10 @@ async def generate_draft(request: DraftActivityInput) -> DraftActivityResult:
             # the infrastructure is the estate's, not a campaign's.
             brief=settings.message_form == "brief",
             evidence_url=lead_evidence_url,
-            # None unless the manager has promoted a register on measured
-            # evidence, in which case every lead gets it instead of the one
-            # their id happened to select.
-            promoted_variant=(
-                policy.managed_promoted_variant if policy is not None else None
-            ),
+            # No promoted register: the manager no longer promotes one (item K,
+            # 11 Oct 2026). Each lead gets the register its id selects until
+            # the message-policy model (M4) earns that decision.
+            promoted_variant=None,
             case_study=case_study,
             one_pager_url=settings.one_pager_url,
         )
