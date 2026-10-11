@@ -46,15 +46,30 @@ async def _report(workspace_id: uuid.UUID, *, days: int) -> None:
 
 
 async def _send(workspace_id: uuid.UUID, seeds) -> int:
-    from coldops.db.session import workspace_unit_of_work
+    from coldops.db.session import get_sessionmaker, workspace_unit_of_work
     from coldops.delivery.mailboxes import load_mailboxes
-    from coldops.delivery.placement_probe import plan_round, record_round, send_round
+    from coldops.delivery.placement_probe import (
+        plan_round,
+        record_round,
+        sample_pdf,
+        send_round,
+    )
 
     settings = get_settings()
     registry = load_mailboxes(settings.mailbox_file)
     now = dt.datetime.now(dt.UTC)
 
-    planned = plan_round(list(registry.addresses()), seeds, now=now)
+    # Half the probes carry the operator's own personal PDF, so placement
+    # is measured with and without the attachment first emails carry.
+    attachment = None
+    if settings.audit_pdf_enabled:
+        async with get_sessionmaker()() as session:
+            attachment = await sample_pdf(
+                session, workspace_id=workspace_id, artifact_dir=settings.artifact_dir
+            )
+    planned = plan_round(
+        list(registry.addresses()), seeds, now=now, with_attachment=attachment is not None
+    )
     if not planned:
         print("Nothing to probe: no enabled mailboxes.")
         return 1
@@ -64,6 +79,7 @@ async def _send(workspace_id: uuid.UUID, seeds) -> int:
         planned,
         timeout_seconds=float(settings.smtp_timeout_seconds),
         now=now,
+        attachment=attachment,
     )
     for probe in planned:
         mark = "sent" if probe.probe_token in accepted else "FAILED"

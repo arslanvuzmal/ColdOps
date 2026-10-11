@@ -43,7 +43,7 @@ import uuid
 from dataclasses import dataclass
 
 from coldops.delivery.placement import ProbeRow, new_probe_token, record_sent
-from coldops.delivery.providers.base import OutboundEmail
+from coldops.delivery.providers.base import Attachment, OutboundEmail
 from coldops.delivery.providers.smtp_pool import SmtpPoolProvider
 from coldops.delivery.seeds import Seed, SeedRegistry
 
@@ -76,6 +76,10 @@ class PlannedProbe:
     from_email: str
     seed: Seed
     probe_token: str
+    #: Carries the sample personal PDF. Half of each round does, alternating by
+    #: mailbox and day, so placement is measured with and without it -- the
+    #: 9 Oct condition for attaching it to first emails at all.
+    attach: bool = False
 
     @property
     def subject(self) -> str:
@@ -102,7 +106,11 @@ def rotation_day(now: dt.datetime) -> int:
 
 
 def plan_round(
-    mailboxes: list[str], seeds: SeedRegistry, *, now: dt.datetime
+    mailboxes: list[str],
+    seeds: SeedRegistry,
+    *,
+    now: dt.datetime,
+    with_attachment: bool = False,
 ) -> list[PlannedProbe]:
     """One probe per sending mailbox, each to a different provider today.
 
@@ -127,7 +135,14 @@ def plan_round(
             continue
         seed = candidates[day % len(candidates)]
         planned.append(
-            PlannedProbe(from_email=from_email, seed=seed, probe_token=new_probe_token())
+            PlannedProbe(
+                from_email=from_email,
+                seed=seed,
+                probe_token=new_probe_token(),
+                # Alternating by mailbox and by day: every mailbox is read both
+                # ways across two days, and every round has both kinds.
+                attach=with_attachment and (index + day) % 2 == 0,
+            )
         )
     return planned
 
@@ -138,6 +153,7 @@ async def send_round(
     *,
     timeout_seconds: float,
     now: dt.datetime,
+    attachment: Attachment | None = None,
 ) -> set[str]:
     """Send each planned probe. Returns the tokens the provider accepted.
 
@@ -162,6 +178,7 @@ async def send_round(
                 subject=probe.subject,
                 text_body=probe.body(now=now),
                 idempotency_key=f"placement:{probe.probe_token}",
+                attachments=(attachment,) if probe.attach and attachment else (),
             )
         )
         if result.accepted:
@@ -206,12 +223,51 @@ async def record_round(
                 provider=probe.seed.provider,
                 from_email=probe.from_email,
                 subject=probe.subject,
-                had_attachment=False,
+                had_attachment=probe.attach,
                 sent_at=now,
             ),
         )
         written += 1
     return written
+
+
+async def sample_pdf(
+    session, *, workspace_id: uuid.UUID, artifact_dir: str | None
+) -> Attachment | None:
+    """The personal PDF a probe carries: the operator's own, never a prospect's.
+
+    The newest one rendered for a lead in an end-to-end test campaign -- the
+    operator's own site, written to the operator's own inbox. A probe goes to
+    a seed we own, but a prospect's screenshot and findings have no business
+    leaving their own email, even to us. None when no such PDF exists yet, and
+    the round then runs without attachments rather than not at all.
+    """
+    from sqlalchemy import text
+
+    from coldops.intelligence import audit_pdf
+
+    if not artifact_dir:
+        return None
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT d.id FROM message_drafts d
+                  JOIN campaigns c ON c.id = d.campaign_id
+                 WHERE d.workspace_id = :ws
+                   AND (c.slug = 'coldops-e2e-test' OR c.slug LIKE 'coldops-e2e-test-%')
+                 ORDER BY d.created_at DESC
+                 LIMIT 10
+                """
+            ),
+            {"ws": workspace_id},
+        )
+    ).all()
+    for (draft_id,) in rows:
+        path = audit_pdf.pdf_path(artifact_dir, draft_id)
+        if path is not None and path.is_file() and path.stat().st_size > 0:
+            return Attachment(filename="website-check.pdf", content=path.read_bytes())
+    return None
 
 
 __all__ = [
@@ -221,4 +277,5 @@ __all__ = [
     "plan_round",
     "record_round",
     "rotation_day",
+    "sample_pdf",
 ]

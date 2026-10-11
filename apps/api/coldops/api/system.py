@@ -90,6 +90,12 @@ class PdfsOut(BaseModel):
     rendered_7d: int | None
     attached_7d: int
     first_emails_7d: int
+    #: Inbox tests over the last 14 days, split by whether the probe carried
+    #: the PDF -- the 9 Oct condition for attaching it at all.
+    probes_with_pdf: int
+    inbox_with_pdf: int
+    probes_without_pdf: int
+    inbox_without_pdf: int
 
 
 class SystemOut(BaseModel):
@@ -212,6 +218,28 @@ async def system(
         ).one()
 
     rendered_total, rendered_7d = _pdf_files(settings.artifact_dir, week)
+    async with workspace_session(principal.workspace_id) as session:
+        split = {
+            bool(row.had_attachment): row
+            for row in (
+                await session.execute(
+                    text(
+                        """
+                        SELECT had_attachment,
+                               count(*) AS probes,
+                               -- Inbox only, as the placement gate counts it.
+                               count(*) FILTER (WHERE folder = 'inbox') AS inbox
+                          FROM placement_checks
+                         WHERE workspace_id = :ws
+                           AND sent_at >= :since
+                           AND folder IN ('inbox', 'promotions', 'spam', 'missing')
+                         GROUP BY had_attachment
+                        """
+                    ),
+                    {"ws": principal.workspace_id, "since": now - dt.timedelta(days=14)},
+                )
+            ).all()
+        }
     return SystemOut(
         checked_at=now,
         readiness=ReadinessOut(
@@ -264,6 +292,10 @@ async def system(
             rendered_7d=rendered_7d,
             attached_7d=int(firsts.attached or 0),
             first_emails_7d=int(firsts.total or 0),
+            probes_with_pdf=int(split[True].probes) if True in split else 0,
+            inbox_with_pdf=int(split[True].inbox) if True in split else 0,
+            probes_without_pdf=int(split[False].probes) if False in split else 0,
+            inbox_without_pdf=int(split[False].inbox) if False in split else 0,
         ),
     )
 

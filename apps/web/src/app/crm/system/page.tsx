@@ -184,8 +184,15 @@ function Models({ data }: { data: SystemStatus }) {
   );
 }
 
+function share(hit: number, of: number): string {
+  return of > 0 ? `${hit}/${of} (${Math.round((hit / of) * 100)}%)` : 'no tests yet';
+}
+
 function Pdfs({ data }: { data: SystemStatus }) {
   const p = data.pdfs;
+  const withRate = p.probes_with_pdf > 0 ? p.inbox_with_pdf / p.probes_with_pdf : null;
+  const withoutRate = p.probes_without_pdf > 0 ? p.inbox_without_pdf / p.probes_without_pdf : null;
+  const hurts = withRate !== null && withoutRate !== null && withRate + 0.1 < withoutRate;
   return (
     <Card
       title="Personal PDFs"
@@ -206,6 +213,24 @@ function Pdfs({ data }: { data: SystemStatus }) {
             p.first_emails_7d > 0
               ? `${Math.round((p.attached_7d / p.first_emails_7d) * 100)}% of first emails`
               : 'no first emails this week'
+          }
+        />
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Stat
+          label="Inbox tests WITH the PDF (14 days)"
+          value={share(p.inbox_with_pdf, p.probes_with_pdf)}
+          tone={withRate === null ? 'neutral' : withRate >= 0.8 ? 'good' : 'bad'}
+          hint="half of each day's inbox tests carry your own PDF"
+        />
+        <Stat
+          label="Inbox tests WITHOUT it"
+          value={share(p.inbox_without_pdf, p.probes_without_pdf)}
+          tone={withoutRate === null ? 'neutral' : withoutRate >= 0.8 ? 'good' : 'bad'}
+          hint={
+            hurts
+              ? 'the PDF is costing inbox placement: consider switching it off'
+              : 'the comparison that says whether the attachment hurts'
           }
         />
       </div>

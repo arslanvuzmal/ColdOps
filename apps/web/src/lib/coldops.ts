@@ -747,6 +747,10 @@ export type SystemStatus = {
     rendered_7d: number | null;
     attached_7d: number;
     first_emails_7d: number;
+    probes_with_pdf: number;
+    inbox_with_pdf: number;
+    probes_without_pdf: number;
+    inbox_without_pdf: number;
   };
 };
 
