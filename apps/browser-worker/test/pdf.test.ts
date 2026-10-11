@@ -90,3 +90,16 @@ test('a document over its limits is rendered but not saved', async () => {
   assert.match(out.refused ?? "", /^[0-9]+ pages$/);
   await assert.rejects(fs.access(path.join(dir, 'pdfs', `${DRAFT}.pdf`)));
 });
+
+test('a preview reads its screenshots but writes nothing', async () => {
+  // Found 11 Oct 2026: a preview was handed no directory, so every preview
+  // showed an empty frame where the screenshot belongs.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pdf-'));
+  const key = await saveShot(dir, Buffer.from('not really a jpeg'));
+  const html = `<html><body><img src="artifact:${key}"></body></html>`;
+  const inlined = await inlineArtifacts(html, dir);
+  assert.match(inlined, /data:image\/jpeg;base64,/);
+  const out = await renderPdf(browser, { draftId: DRAFT, html }, dir, false);
+  assert.equal(out.key, null);
+  await assert.rejects(fs.stat(path.join(dir, pdfKeyFor(DRAFT))));
+});

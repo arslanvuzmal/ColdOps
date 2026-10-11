@@ -65,7 +65,8 @@ def _p(text: str | None) -> str:
 
 def _flowchart(steps: tuple[str, ...]) -> str:
     """The plan's steps as numbered boxes joined by arrows. Inline SVG, no model."""
-    width, box_h, gap = 520, 46, 22
+    # Tall enough for two full lines; the plan's steps are a sentence each.
+    width, box_h, gap = 520, 58, 22
     height = len(steps) * box_h + (len(steps) - 1) * gap
     parts = [
         f'<svg class="flow" viewBox="0 0 {width} {height}" width="{width}" '
@@ -73,7 +74,7 @@ def _flowchart(steps: tuple[str, ...]) -> str:
     ]
     for i, step in enumerate(steps):
         y = i * (box_h + gap)
-        label = step if len(step) <= 92 else step[:89].rstrip() + "..."
+        label = step if len(step) <= 170 else step[:167].rstrip() + "..."
         parts.append(
             f'<rect x="1" y="{y + 1}" width="{width - 2}" height="{box_h - 2}" rx="7" '
             'fill="#eef3fa" stroke="#1f4f99" stroke-width="1"/>'

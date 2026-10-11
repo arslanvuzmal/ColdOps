@@ -145,8 +145,10 @@ const server = http.createServer(async (req, res) => {
             maxBytes: typeof body?.max_bytes === 'number' ? body.max_bytes : undefined,
             maxPages: typeof body?.max_pages === 'number' ? body.max_pages : undefined,
           },
-          // A preview is returned, never saved where the outbox worker looks.
-          body?.save === false ? null : artifactDir(),
+          // A preview is returned, never saved where the outbox worker looks;
+          // it still reads the screenshots, so it shows what would be sent.
+          artifactDir(),
+          body?.save !== false,
         );
         send(res, 200, {
           key: out.key,

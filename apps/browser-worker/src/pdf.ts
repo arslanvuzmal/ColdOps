@@ -109,6 +109,10 @@ export async function renderPdf(
     maxPages,
   }: { draftId: string; html: string; maxBytes?: number; maxPages?: number },
   dir: string | null,
+  // Whether to write the file. A preview still reads its screenshots from
+  // `dir` -- it used to be handed no directory at all, so every preview showed
+  // a blank frame where the screenshot belongs, unlike the file it previewed.
+  save = true,
 ): Promise<RenderedPdf> {
   if (Buffer.byteLength(html) > MAX_HTML_BYTES) throw new Error('html too large');
   const key = pdfKeyFor(draftId);
@@ -134,7 +138,7 @@ export async function renderPdf(
     if (maxBytes && pdf.length > maxBytes) {
       return { key: null, refused: `${pdf.length} bytes`, bytes: pdf.length, pages, pdf };
     }
-    if (!dir) return { key: null, bytes: pdf.length, pages, pdf };
+    if (!dir || !save) return { key: null, bytes: pdf.length, pages, pdf };
     const target = path.join(dir, key);
     await fs.mkdir(path.dirname(target), { recursive: true });
     const temp = `${target}.${process.pid}.tmp`;
