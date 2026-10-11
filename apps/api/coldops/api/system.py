@@ -98,6 +98,22 @@ class PdfsOut(BaseModel):
     inbox_without_pdf: int
 
 
+class RepairOut(BaseModel):
+    at: dt.datetime
+    what: str
+    action: str
+    reason: str
+
+
+class HealingOut(BaseModel):
+    """Self-healing (programme item M): what repaired itself, and what could not."""
+
+    container_log_available: bool
+    recent: list[RepairOut]
+    repaired_7d: int
+    gave_up_7d: int
+
+
 class SystemOut(BaseModel):
     checked_at: dt.datetime
     readiness: ReadinessOut
@@ -105,6 +121,33 @@ class SystemOut(BaseModel):
     models: list[ModelOut]
     labels_total: int
     pdfs: PdfsOut
+    healing: HealingOut
+
+
+def _container_repairs(path: str | None) -> list[RepairOut] | None:
+    """The container doctor's log, newest first; None when it is not mounted."""
+    import json
+
+    if not path:
+        return None
+    file = pathlib.Path(path)
+    if not file.is_file():
+        return None
+    out: list[RepairOut] = []
+    for line in file.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]:
+        try:
+            row = json.loads(line)
+            out.append(
+                RepairOut(
+                    at=dt.datetime.fromisoformat(row["at"].replace("Z", "+00:00")),
+                    what=f"container {row['container']}",
+                    action=row["action"],
+                    reason=row.get("reason", ""),
+                )
+            )
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
 
 
 async def _schedules(workspace_id: str) -> SchedulesOut:
@@ -159,6 +202,44 @@ def _pdf_files(
                 if entry.stat().st_mtime >= cutoff:
                     recent += 1
     return total, recent
+
+
+async def _healing(workspace_id, heal_log: str | None, now: dt.datetime) -> HealingOut:
+    week = now - dt.timedelta(days=7)
+    async with workspace_session(workspace_id) as session:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT created_at, title FROM tasks
+                     WHERE workspace_id = :ws
+                       AND kind = 'pipeline_alert'
+                       AND title LIKE 'The % schedule %'
+                       AND created_at >= now() - interval '30 days'
+                     ORDER BY created_at DESC LIMIT 50
+                    """
+                ),
+                {"ws": workspace_id},
+            )
+        ).all()
+    schedule = [
+        RepairOut(
+            at=r.created_at,
+            what="scheduled job",
+            action="restarted" if "was restarted" in r.title else "gave_up",
+            reason=r.title,
+        )
+        for r in rows
+    ]
+    containers = _container_repairs(heal_log)
+    every = sorted([*schedule, *(containers or [])], key=lambda r: r.at, reverse=True)
+    recent_week = [r for r in every if r.at >= week]
+    return HealingOut(
+        container_log_available=containers is not None,
+        recent=every[:20],
+        repaired_7d=sum(r.action == "restarted" for r in recent_week),
+        gave_up_7d=sum(r.action in ("gave_up", "restart_failed") for r in recent_week),
+    )
 
 
 @router.get("/system", response_model=SystemOut)
@@ -274,6 +355,7 @@ async def system(
             earliest=r.earliest,
         ),
         schedules=await _schedules(str(principal.workspace_id)),
+        healing=await _healing(principal.workspace_id, settings.heal_log_file, now),
         models=[
             ModelOut(
                 name=m.name,

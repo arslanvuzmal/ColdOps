@@ -47,9 +47,32 @@ async def test_the_system_page_answers_every_section(
     assert body["schedules"]["reachable"] is False
     assert body["models"] == []
     assert body["pdfs"]["first_emails_7d"] == 0
+    assert body["healing"]["container_log_available"] is False
+    assert body["healing"]["repaired_7d"] == 0
 
 
 @pytest.mark.asyncio
 async def test_the_system_page_needs_a_session(client):  # noqa: F811
     response = await client.get("/api/v1/dashboard/system")
     assert response.status_code == 401
+
+
+def test_the_container_doctors_log_is_read() -> None:
+    import pathlib
+    import tempfile
+
+    folder = pathlib.Path(tempfile.mkdtemp(prefix="coldops-heal-"))
+    log = folder / "heal.log"
+    log.write_text(
+        '{"at":"2026-10-11T19:48:15Z","container":"deploy-api-1","action":"restarted",'
+        '"reason":"health check failing"}\n'
+        "not json at all\n"
+        '{"at":"2026-10-11T19:48:25Z","container":"deploy-api-1","action":"gave_up",'
+        '"reason":"needs a person"}\n',
+        encoding="utf-8",
+    )
+    repairs = system_api._container_repairs(str(log))
+    assert [r.action for r in repairs] == ["restarted", "gave_up"]
+    assert repairs[0].what == "container deploy-api-1"
+    assert system_api._container_repairs(str(folder / "missing.log")) is None
+    assert system_api._container_repairs(None) is None

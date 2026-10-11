@@ -80,9 +80,13 @@ services:
       - artifacts:/data/artifacts:ro
       # Writable: `coldops oauth-microsoft` runs here and keeps the token.
       - oauth_tokens:/data/oauth
+      # Read-only: the container doctor's repair log (deploy/heal-containers.sh,
+      # run on the host), shown on the CRM's System page.
+      - ../logs:/data/heal-log:ro
     environment:
       COLDOPS_ARTIFACT_DIR: /data/artifacts
       COLDOPS_OAUTH_TOKEN_DIR: /data/oauth
+      COLDOPS_HEAL_LOG_FILE: /data/heal-log/heal.log
     # Not published to the host: nginx terminates TLS and is the only ingress.
     expose: ["8000"]
     depends_on:

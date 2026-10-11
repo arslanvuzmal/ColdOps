@@ -1,0 +1,8 @@
+[Unit]
+Description=ColdOps container doctor (restart a container stuck unhealthy)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/coldops/deploy/heal-containers.sh

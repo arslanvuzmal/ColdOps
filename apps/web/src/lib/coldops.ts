@@ -735,8 +735,16 @@ export type MlModel = {
   predictions_total: number;
 };
 
+export type Repair = { at: string; what: string; action: string; reason: string };
+
 export type SystemStatus = {
   checked_at: string;
+  healing: {
+    container_log_available: boolean;
+    recent: Repair[];
+    repaired_7d: number;
+    gave_up_7d: number;
+  };
   readiness: Readiness;
   schedules: { reachable: boolean; error: string | null; schedules: ScheduledJob[] };
   models: MlModel[];

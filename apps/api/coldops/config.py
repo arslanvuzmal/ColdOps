@@ -506,6 +506,9 @@ class Settings(BaseSettings):
     #: Approval, suppression, authentication and unsubscribe still apply.
     #: Empty by default, so nothing is exempt until an operator names an inbox.
     test_recipients: Annotated[tuple[str, ...], NoDecode] = ()
+    #: The container doctor's repair log (deploy/heal-containers.sh), one JSON
+    #: line per action. Read-only, for the System page; unset shows nothing.
+    heal_log_file: str | None = None
     #: HMAC secret for verifying Smartlead webhook callbacks. Without it the
     #: webhook route must fail closed -- an unverified callback can mark a
     #: message replied and stop a sequence.

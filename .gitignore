@@ -41,3 +41,4 @@ htmlcov/
 backups/
 *.sql.gz
 secrets/
+/logs/

@@ -155,6 +155,51 @@ function Jobs({ data }: { data: SystemStatus }) {
   );
 }
 
+function Healing({ data }: { data: SystemStatus }) {
+  const h = data.healing;
+  return (
+    <Card
+      title="Self-healing"
+      subtitle="What repaired itself. Stuck scheduled jobs are reinstalled; a container stuck unhealthy is restarted, at most three times an hour, then left for you. Deploys and data are never touched."
+    >
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Stat label="Repaired (7 days)" value={`${h.repaired_7d}`} tone="good" />
+        <Stat
+          label="Gave up, needs you (7 days)"
+          value={`${h.gave_up_7d}`}
+          tone={h.gave_up_7d > 0 ? 'bad' : 'neutral'}
+        />
+        <Stat
+          label="Container doctor"
+          value={h.container_log_available ? 'installed' : 'not installed'}
+          tone={h.container_log_available ? 'good' : 'warn'}
+          hint={h.container_log_available ? 'checks every two minutes' : 'run deploy/install-healing.sh on the server'}
+        />
+      </div>
+      {h.recent.length === 0 ? (
+        <Empty>Nothing has needed repairing.</Empty>
+      ) : (
+        <Table head={['When', 'What', 'Action', 'Why']}>
+          {h.recent.map((r, i) => (
+            <tr key={`${r.at}-${i}`}>
+              <td className="px-3 py-2 text-slate-600">
+                <Time value={r.at} />
+              </td>
+              <td className="px-3 py-2 text-slate-900">{r.what}</td>
+              <td className="px-3 py-2">
+                <Badge tone={r.action === 'restarted' ? 'good' : 'bad'}>
+                  {r.action === 'restarted' ? 'repaired' : r.action.replace('_', ' ')}
+                </Badge>
+              </td>
+              <td className="px-3 py-2 text-sm text-slate-600">{r.reason}</td>
+            </tr>
+          ))}
+        </Table>
+      )}
+    </Card>
+  );
+}
+
 function Models({ data }: { data: SystemStatus }) {
   return (
     <Card
@@ -258,6 +303,7 @@ export default function SystemPage() {
         <>
           <Reactivation data={data} />
           <Jobs data={data} />
+          <Healing data={data} />
           <Models data={data} />
           <Pdfs data={data} />
         </>
