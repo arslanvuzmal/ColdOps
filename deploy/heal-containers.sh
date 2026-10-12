@@ -61,3 +61,19 @@ while read -r name; do
         log "$name" "restart_failed" "docker restart returned an error"
     fi
 done
+
+# Disk: clear old image-build cache when the disk passes $DISK_LIMIT%. Found in
+# the 11 Oct 2026 review at 80% full, 43 GB of it reclaimable build cache from
+# deploys. Cache only -- never images in use, volumes or data -- and only what
+# is over three days old, so the next deploy still builds quickly.
+DISK_LIMIT=${COLDOPS_HEAL_DISK_LIMIT:-80}
+used=$(df -P / | awk 'NR==2 {gsub("%","",$5); print $5}')
+if [ "${used:-0}" -ge "$DISK_LIMIT" ]; then
+    if docker builder prune -f --filter until=72h >/dev/null 2>&1; then
+        after=$(df -P / | awk 'NR==2 {gsub("%","",$5); print $5}')
+        log "disk" "pruned" "disk at ${used}%, cleared old build cache, now ${after}%"
+    else
+        log "disk" "prune_failed" "disk at ${used}% and clearing build cache failed"
+    fi
+fi
+

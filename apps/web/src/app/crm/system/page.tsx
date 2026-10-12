@@ -155,15 +155,27 @@ function Jobs({ data }: { data: SystemStatus }) {
   );
 }
 
+const GOOD_ACTIONS: Record<string, string> = {
+  restarted: 'repaired',
+  pruned: 'disk cleared',
+  backed_up: 'backed up',
+};
+
 function Healing({ data }: { data: SystemStatus }) {
   const h = data.healing;
   return (
     <Card
-      title="Self-healing"
-      subtitle="What repaired itself. Stuck scheduled jobs are reinstalled; a container stuck unhealthy is restarted, at most three times an hour, then left for you. Deploys and data are never touched."
+      title="Self-healing and backups"
+      subtitle="What repaired itself. Stuck scheduled jobs are reinstalled; a container stuck unhealthy is restarted, at most three times an hour, then left for you; old build cache is cleared when the disk passes 80%; the database is backed up daily. Deploys and data are never touched."
     >
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Repaired (7 days)" value={`${h.repaired_7d}`} tone="good" />
+        <Stat
+          label="Last database backup"
+          value={h.last_backup_at ? new Date(h.last_backup_at).toLocaleDateString() : 'none yet'}
+          tone={h.last_backup_at ? 'good' : 'warn'}
+          hint="daily at 03:30 UTC, kept for a week"
+        />
         <Stat
           label="Gave up, needs you (7 days)"
           value={`${h.gave_up_7d}`}
@@ -187,8 +199,8 @@ function Healing({ data }: { data: SystemStatus }) {
               </td>
               <td className="px-3 py-2 text-slate-900">{r.what}</td>
               <td className="px-3 py-2">
-                <Badge tone={r.action === 'restarted' ? 'good' : 'bad'}>
-                  {r.action === 'restarted' ? 'repaired' : r.action.replace('_', ' ')}
+                <Badge tone={GOOD_ACTIONS[r.action] ? 'good' : 'bad'}>
+                  {GOOD_ACTIONS[r.action] ?? r.action.replace('_', ' ')}
                 </Badge>
               </td>
               <td className="px-3 py-2 text-sm text-slate-600">{r.reason}</td>

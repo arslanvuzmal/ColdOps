@@ -746,6 +746,7 @@ export type SystemStatus = {
     recent: Repair[];
     repaired_7d: number;
     gave_up_7d: number;
+    last_backup_at: string | null;
   };
   readiness: Readiness;
   schedules: { reachable: boolean; error: string | null; schedules: ScheduledJob[] };

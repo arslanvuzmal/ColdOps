@@ -98,6 +98,11 @@ class PdfsOut(BaseModel):
     inbox_without_pdf: int
 
 
+#: What the repair log's actions mean, for the counts.
+REPAIRED = frozenset({"restarted", "pruned"})
+FAILED = frozenset({"gave_up", "restart_failed", "prune_failed", "backup_failed"})
+
+
 class RepairOut(BaseModel):
     at: dt.datetime
     what: str
@@ -112,6 +117,8 @@ class HealingOut(BaseModel):
     recent: list[RepairOut]
     repaired_7d: int
     gave_up_7d: int
+    #: The newest daily database backup (deploy/backup-database.sh), if any.
+    last_backup_at: dt.datetime | None = None
 
 
 class SystemOut(BaseModel):
@@ -140,7 +147,11 @@ def _container_repairs(path: str | None) -> list[RepairOut] | None:
             out.append(
                 RepairOut(
                     at=dt.datetime.fromisoformat(row["at"].replace("Z", "+00:00")),
-                    what=f"container {row['container']}",
+                    what=(
+                        row["container"]
+                        if row["container"] in ("database", "disk")
+                        else f"container {row['container']}"
+                    ),
                     action=row["action"],
                     reason=row.get("reason", ""),
                 )
@@ -234,11 +245,13 @@ async def _healing(workspace_id, heal_log: str | None, now: dt.datetime) -> Heal
     containers = _container_repairs(heal_log)
     every = sorted([*schedule, *(containers or [])], key=lambda r: r.at, reverse=True)
     recent_week = [r for r in every if r.at >= week]
+    backups = [r.at for r in (containers or []) if r.action == "backed_up"]
     return HealingOut(
         container_log_available=containers is not None,
         recent=every[:20],
-        repaired_7d=sum(r.action == "restarted" for r in recent_week),
-        gave_up_7d=sum(r.action in ("gave_up", "restart_failed") for r in recent_week),
+        repaired_7d=sum(r.action in REPAIRED for r in recent_week),
+        gave_up_7d=sum(r.action in FAILED for r in recent_week),
+        last_backup_at=max(backups) if backups else None,
     )
 
 

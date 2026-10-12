@@ -1,0 +1,8 @@
+[Unit]
+Description=ColdOps daily database backup (kept for a week)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/coldops/deploy/backup-database.sh
