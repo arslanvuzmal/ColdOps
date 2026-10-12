@@ -85,6 +85,14 @@ async def run_warmup_round(request: WarmupRoundInput) -> WarmupRoundResult:
             "starred": tended.starred,
         },
     )
+    try:
+        await _record_by_mailbox(
+            uuid.UUID(request.workspace_id),
+            [sent, tended],
+            ours={p.address.lower() for p in sending},
+        )
+    except Exception:
+        activity.logger.exception("could not record warm-up per mailbox")
     return WarmupRoundResult(
         planned=len(today),
         sent=sent.sent,
@@ -94,6 +102,73 @@ async def run_warmup_round(request: WarmupRoundInput) -> WarmupRoundResult:
         replied=tended.replied,
         errors=tuple((sent.errors + tended.errors)[:10]),
     )
+
+
+async def _record_by_mailbox(
+    workspace_id: uuid.UUID, reports: list, *, ours: set[str]
+) -> None:
+    """Add this round's counts to today's row per mailbox, and raise an alert the
+    first time a day one of our mailboxes has its warm-up mail found in spam --
+    the earliest sign a mailbox is slipping, days before an inbox test shows it.
+    """
+    from sqlalchemy import text
+
+    from coldops.db.session import workspace_unit_of_work
+    from coldops.notify.operator import (
+        NotificationKind,
+        mail_notification,
+        push_notification,
+        record_notification,
+    )
+
+    totals: dict[str, dict[str, int]] = {}
+    for report in reports:
+        for address, counts in report.by_mailbox.items():
+            box = totals.setdefault(
+                address, {"sent": 0, "received": 0, "rescued": 0, "replied": 0}
+            )
+            for key, value in counts.items():
+                box[key] += value
+    if not totals:
+        return
+    today = dt.datetime.now(dt.UTC).date()
+    alerts = []
+    async with workspace_unit_of_work(workspace_id) as session:
+        for address, c in totals.items():
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO warmup_daily
+                        (workspace_id, day, mailbox, sent, received, rescued, replied)
+                    VALUES (:ws, :day, :mailbox, :sent, :received, :rescued, :replied)
+                    ON CONFLICT (workspace_id, day, mailbox) DO UPDATE SET
+                        sent = warmup_daily.sent + EXCLUDED.sent,
+                        received = warmup_daily.received + EXCLUDED.received,
+                        rescued = warmup_daily.rescued + EXCLUDED.rescued,
+                        replied = warmup_daily.replied + EXCLUDED.replied,
+                        updated_at = now()
+                    """
+                ),
+                {"ws": workspace_id, "day": today, "mailbox": address, **c},
+            )
+            if c["rescued"] and address in ours:
+                alert = await record_notification(
+                    session,
+                    workspace_id=workspace_id,
+                    kind=NotificationKind.DELIVERABILITY_ALERT,
+                    title=f"Warm-up mail from {address} landed in spam",
+                    description=(
+                        f"{c['rescued']} of its warm-up messages were found in a junk "
+                        "folder today and moved back to the inbox. One is noise; the "
+                        "same on following days means the mailbox is slipping."
+                    ),
+                    dedupe_key=f"warmup-spam:{address}:{today.isoformat()}",
+                )
+                if alert is not None:
+                    alerts.append(alert)
+    for alert in alerts:
+        await mail_notification(alert)
+        await push_notification(alert)
 
 
 ALL_WARMUP_ACTIVITIES = [run_warmup_round]

@@ -46,6 +46,7 @@ SQL_ONLY_TABLES = frozenset(
         "ml_predictions",
         "placement_checks",
         "sending_claims",
+        "warmup_daily",
     }
 )
 

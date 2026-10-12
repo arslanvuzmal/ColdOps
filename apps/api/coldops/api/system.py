@@ -121,8 +121,31 @@ class HealingOut(BaseModel):
     last_backup_at: dt.datetime | None = None
 
 
+class WarmupMailboxOut(BaseModel):
+    address: str
+    day: int
+    volume_today: int
+    full_volume_on: dt.date | None
+    sent_7d: int
+    received_7d: int
+    replied_7d: int
+    rescued_7d: int
+    inbox_tests: int
+    inbox_landed: int
+    on_track: bool
+    reasons: list[str]
+
+
+class WarmupOut(BaseModel):
+    """Every sending mailbox against the operator's fully-warmed date."""
+
+    target: dt.date | None
+    mailboxes: list[WarmupMailboxOut]
+
+
 class SystemOut(BaseModel):
     checked_at: dt.datetime
+    warmup: WarmupOut
     readiness: ReadinessOut
     schedules: SchedulesOut
     models: list[ModelOut]
@@ -255,6 +278,67 @@ async def _healing(workspace_id, heal_log: str | None, now: dt.datetime) -> Heal
     )
 
 
+async def _warmup(workspace_id, settings, now: dt.datetime, readiness_boxes) -> WarmupOut:
+    from coldops.cli import _warmup_days
+    from coldops.delivery.warmup import DAILY_VOLUME
+
+    days = await _warmup_days(workspace_id)
+    full_day = DAILY_VOLUME.index(max(DAILY_VOLUME))
+    async with workspace_session(workspace_id) as session:
+        rows = {
+            r.mailbox: r
+            for r in (
+                await session.execute(
+                    text(
+                        """
+                        SELECT mailbox, sum(sent) AS sent, sum(received) AS received,
+                               sum(replied) AS replied, sum(rescued) AS rescued
+                          FROM warmup_daily
+                         WHERE workspace_id = :ws AND day > CAST(:since AS date)
+                         GROUP BY mailbox
+                        """
+                    ),
+                    {"ws": workspace_id, "since": (now - dt.timedelta(days=7)).date()},
+                )
+            ).all()
+        }
+    target = settings.warmup_target_date
+    out: list[WarmupMailboxOut] = []
+    for box in readiness_boxes:
+        day = days.get(box.address)
+        if day is None:
+            continue
+        full_on = now.date() + dt.timedelta(days=max(0, full_day - day))
+        r = rows.get(box.address)
+        rescued = int(r.rescued) if r else 0
+        reasons: list[str] = []
+        if target is not None and full_on > target:
+            reasons.append(f"reaches full volume on {full_on:%d %b}, after the target")
+        if rescued:
+            reasons.append(f"{rescued} warm-up message(s) found in spam this week")
+        if box.probes and box.inbox < box.probes:
+            reasons.append(f"{box.probes - box.inbox} inbox test(s) missed the inbox")
+        if r is None or not r.sent:
+            reasons.append("no warm-up recorded this week yet")
+        out.append(
+            WarmupMailboxOut(
+                address=box.address,
+                day=day,
+                volume_today=DAILY_VOLUME[min(day, len(DAILY_VOLUME) - 1)],
+                full_volume_on=full_on,
+                sent_7d=int(r.sent) if r else 0,
+                received_7d=int(r.received) if r else 0,
+                replied_7d=int(r.replied) if r else 0,
+                rescued_7d=rescued,
+                inbox_tests=box.probes,
+                inbox_landed=box.inbox,
+                on_track=not reasons,
+                reasons=reasons,
+            )
+        )
+    return WarmupOut(target=target, mailboxes=out)
+
+
 @router.get("/system", response_model=SystemOut)
 async def system(
     principal: Principal = Depends(require("research:read")),
@@ -369,6 +453,7 @@ async def system(
         ),
         schedules=await _schedules(str(principal.workspace_id)),
         healing=await _healing(principal.workspace_id, settings.heal_log_file, now),
+        warmup=await _warmup(principal.workspace_id, settings, now, r.mailboxes),
         models=[
             ModelOut(
                 name=m.name,

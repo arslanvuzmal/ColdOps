@@ -15,6 +15,7 @@ Design rules (see docs/audits/PRODUCTION-GAP-ANALYSIS.md, finding C-13):
 
 from __future__ import annotations
 
+import datetime as dt
 import enum
 import functools
 from typing import Annotated, Any, Literal
@@ -509,6 +510,9 @@ class Settings(BaseSettings):
     #: The container doctor's repair log (deploy/heal-containers.sh), one JSON
     #: line per action. Read-only, for the System page; unset shows nothing.
     heal_log_file: str | None = None
+    #: The date every sending mailbox should be fully warmed by (the operator
+    #: set 25 Oct 2026). The System page measures each mailbox against it.
+    warmup_target_date: dt.date | None = None
     #: HMAC secret for verifying Smartlead webhook callbacks. Without it the
     #: webhook route must fail closed -- an unverified callback can mark a
     #: message replied and stop a sequence.

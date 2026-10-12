@@ -101,24 +101,24 @@ JUNK_FOLDERS: tuple[str, ...] = (
 #: doubles weekly. Past the end of the list a mailbox stays at the last value:
 #: a warm mailbox still benefits from continuing to have conversations.
 DAILY_VOLUME: tuple[int, ...] = (
+    # Full volume (12) on day 15. Restarted on 10 Oct 2026 for the move to
+    # Google Workspace, so day 15 is 25 Oct -- the operator's date for every
+    # mailbox to be fully warmed. The old ramp reached 12 on day 19 (29 Oct).
+    # Days 0-2 are unchanged, so the restart carries on without a jump.
     2,
     2,
     3,
-    3,
-    4,
     4,
     5,
     5,
     6,
-    6,
     7,
     7,
-    8,
     8,
     9,
     9,
     10,
-    10,
+    11,
     11,
     12,
 )
@@ -241,6 +241,17 @@ class WarmupReport:
     replied: int = 0
     starred: int = 0
     errors: list[str] = field(default_factory=list)
+    #: Per mailbox: sent, received, rescued (its own mail found in a junk
+    #: folder -- the earliest warning there is) and replied.
+    by_mailbox: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    def count(self, address: str, key: str, n: int = 1) -> None:
+        if n:
+            box = self.by_mailbox.setdefault(
+                address.strip().lower(),
+                {"sent": 0, "received": 0, "rescued": 0, "replied": 0},
+            )
+            box[key] += n
 
 
 class NotAParticipant(ValueError):
@@ -463,6 +474,17 @@ def _message_id_of(client: imaplib.IMAP4, uid: str) -> str:
     return value.strip()
 
 
+def _from_of(client: imaplib.IMAP4, uid: str) -> str:
+    """The bare address a message is from, lower-cased; '' if unreadable."""
+    from email.utils import parseaddr
+
+    status, data = client.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+    if status != "OK" or not data or not isinstance(data[0], tuple):
+        return ""
+    _, _, value = data[0][1].decode(errors="replace").partition(":")
+    return parseaddr(value.strip())[1].lower()
+
+
 def _search_warmup(
     client: imaplib.IMAP4, folder: str, senders: list[str], *, unseen_only: bool = False
 ) -> list[str]:
@@ -560,6 +582,8 @@ async def send_round(
         error = await asyncio.to_thread(_smtp_send, send, timeout=timeout_seconds)
         if error is None:
             report.sent += 1
+            report.count(send.sender.address, "sent")
+            report.count(send.recipient.address, "received")
         else:
             report.failed += 1
             report.errors.append(f"{send.describe()}: {error}")
@@ -573,7 +597,7 @@ def _tend_blocking(
     timeout: float,
     reply_share: float,
     seed: str,
-) -> tuple[int, int, int, int, list[str]]:
+) -> tuple[int, int, int, int, list[str], list[str]]:
     """Rescue from spam, then read, star and answer what is new. One connection.
 
     Only *unread* warm-up mail is read, starred or answered, so each message is
@@ -582,6 +606,8 @@ def _tend_blocking(
     """
     rescued = marked = replied = starred = 0
     errors: list[str] = []
+    #: Who sent each message found in a junk folder: whose reputation it is.
+    rescued_from: list[str] = []
     rng = random.Random(f"{seed}:{participant.address}")
     others = [a for a in senders if a.lower() != participant.address.lower()]
     on_gmail = "gmail.com" in (participant.imap.host or "").lower()
@@ -594,11 +620,14 @@ def _tend_blocking(
         for folder in JUNK_FOLDERS:
             uids = _search_warmup(client, folder, others)
             for uid in uids:
+                sender = _from_of(client, uid)
                 status, _ = client.uid("COPY", uid, "INBOX")
                 if status != "OK":
                     continue
                 client.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
                 rescued += 1
+                if sender:
+                    rescued_from.append(sender)
             if uids:
                 client.expunge()
 
@@ -684,7 +713,7 @@ def _tend_blocking(
                 client.logout()
             except Exception as exc:  # pragma: no cover - best effort close
                 logger.debug("imap logout failed: %s", exc)
-    return rescued, marked, replied, starred, errors
+    return rescued, marked, replied, starred, errors, rescued_from
 
 
 async def tend(
@@ -699,7 +728,7 @@ async def tend(
     seed = (on_date or dt.datetime.now(dt.UTC).date()).isoformat()
     senders = [p.address for p in participants]
     for participant in participants:
-        rescued, marked, replied, starred, errors = await asyncio.to_thread(
+        rescued, marked, replied, starred, errors, rescued_from = await asyncio.to_thread(
             _tend_blocking,
             participant,
             senders=senders,
@@ -710,6 +739,9 @@ async def tend(
         report.rescued_from_spam += rescued
         report.marked_read += marked
         report.replied += replied
+        report.count(participant.address, "replied", replied)
+        for sender in rescued_from:
+            report.count(sender, "rescued")
         report.starred += starred
         report.errors.extend(errors)
     return report

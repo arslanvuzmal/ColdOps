@@ -739,8 +739,24 @@ export type MlModel = {
 
 export type Repair = { at: string; what: string; action: string; reason: string };
 
+export type WarmupMailbox = {
+  address: string;
+  day: number;
+  volume_today: number;
+  full_volume_on: string | null;
+  sent_7d: number;
+  received_7d: number;
+  replied_7d: number;
+  rescued_7d: number;
+  inbox_tests: number;
+  inbox_landed: number;
+  on_track: boolean;
+  reasons: string[];
+};
+
 export type SystemStatus = {
   checked_at: string;
+  warmup: { target: string | null; mailboxes: WarmupMailbox[] };
   healing: {
     container_log_available: boolean;
     recent: Repair[];

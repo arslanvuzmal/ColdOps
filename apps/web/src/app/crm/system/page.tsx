@@ -121,6 +121,74 @@ function Reactivation({ data }: { data: SystemStatus }) {
   );
 }
 
+function fmtDate(iso: string | null): string {
+  return iso
+    ? new Date(iso + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+    : '—';
+}
+
+function Warmup({ data }: { data: SystemStatus }) {
+  const w = data.warmup;
+  const ready = w.mailboxes.filter((m) => m.on_track).length;
+  return (
+    <Card
+      title={w.target ? `Warm-up: every mailbox fully warmed by ${fmtDate(w.target)}` : 'Warm-up'}
+      subtitle="Each mailbox trades ordinary mail with your other mailboxes and outside partners every hour from 09:00 to 17:00 UTC, more each day until full volume. Mail found in spam is moved back, and you are alerted the same day."
+    >
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Stat
+          label="On track"
+          value={`${ready} of ${w.mailboxes.length}`}
+          tone={ready === w.mailboxes.length && ready > 0 ? 'good' : 'warn'}
+        />
+        <Stat
+          label="Found in spam (7 days)"
+          value={`${w.mailboxes.reduce((n, m) => n + m.rescued_7d, 0)}`}
+          tone={w.mailboxes.some((m) => m.rescued_7d > 0) ? 'bad' : 'good'}
+        />
+        <Stat
+          label="Warm-up sent (7 days)"
+          value={`${w.mailboxes.reduce((n, m) => n + m.sent_7d, 0)}`}
+        />
+      </div>
+      {w.mailboxes.length === 0 ? (
+        <Empty>No sending mailbox is warming.</Empty>
+      ) : (
+        <Table head={['Mailbox', 'Day', 'Today', 'Full volume on', 'Sent / received / replied (7d)', 'In spam', 'Inbox tests', 'Status']}>
+          {w.mailboxes.map((m) => (
+            <tr key={m.address}>
+              <td className="px-3 py-2 font-medium text-slate-900">{m.address}</td>
+              <td className="px-3 py-2 tabular-nums">{m.day}</td>
+              <td className="px-3 py-2 tabular-nums">{m.volume_today}</td>
+              <td className="px-3 py-2">{fmtDate(m.full_volume_on)}</td>
+              <td className="px-3 py-2 tabular-nums">
+                {m.sent_7d} / {m.received_7d} / {m.replied_7d}
+              </td>
+              <td className="px-3 py-2 tabular-nums">
+                <Badge tone={m.rescued_7d ? 'bad' : 'good'}>{m.rescued_7d}</Badge>
+              </td>
+              <td className="px-3 py-2 tabular-nums">
+                {m.inbox_tests ? `${m.inbox_landed}/${m.inbox_tests} inbox` : 'none yet'}
+              </td>
+              <td className="px-3 py-2 text-sm">
+                {m.on_track ? (
+                  <Badge tone="good">on track</Badge>
+                ) : (
+                  <ul className="space-y-0.5 text-slate-600">
+                    {m.reasons.map((r) => (
+                      <li key={r}>{r}</li>
+                    ))}
+                  </ul>
+                )}
+              </td>
+            </tr>
+          ))}
+        </Table>
+      )}
+    </Card>
+  );
+}
+
 function Jobs({ data }: { data: SystemStatus }) {
   const s = data.schedules;
   return (
@@ -313,6 +381,7 @@ export default function SystemPage() {
         <Spinner />
       ) : data ? (
         <>
+          <Warmup data={data} />
           <Reactivation data={data} />
           <Jobs data={data} />
           <Healing data={data} />

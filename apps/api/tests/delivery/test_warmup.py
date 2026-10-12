@@ -16,6 +16,7 @@ import datetime as dt
 from typing import ClassVar
 
 import pytest
+from coldops.delivery import warmup
 from coldops.delivery.mailboxes import parse_mailboxes
 from coldops.delivery.warmup import (
     MAX_PER_PARTNER,
@@ -450,7 +451,7 @@ def test_tending_reads_new_mail_stars_a_share_and_never_answers_a_reply(
     monkeypatch.setattr(warmup.smtplib, "SMTP_SSL", _FakeSmtp)
 
     me = pool(*THREE)[0]
-    _rescued, marked, replied, starred, errors = warmup._tend_blocking(
+    _rescued, marked, replied, starred, errors, _from = warmup._tend_blocking(
         me, senders=["friend@gmail.com", me.address], timeout=5, reply_share=1.0, seed="x"
     )
 
@@ -463,3 +464,50 @@ def test_tending_reads_new_mail_stars_a_share_and_never_answers_a_reply(
     expected_stars = sum(1 for m in ids.values() if warmup._share(m, "star") < STAR_SHARE)
     assert starred == expected_stars
     assert sum(1 for s in fake.stored if s[2] == r"(\Flagged)") == expected_stars
+
+
+# --------------------------------------------- 25 Oct: fully warmed, per mailbox
+def test_the_ramp_is_at_full_volume_on_25_october() -> None:
+    """Restarted 10 Oct for the Workspace move; the operator wants every
+    mailbox fully warmed by 25 Oct, which is day 15."""
+    import datetime as dt
+
+    day = (dt.date(2026, 10, 25) - dt.date(2026, 10, 10)).days
+    assert warmup.DAILY_VOLUME[day] == max(warmup.DAILY_VOLUME) == 12
+    # Gradual all the way: never more than one more message than yesterday.
+    steps = zip(warmup.DAILY_VOLUME, warmup.DAILY_VOLUME[1:], strict=False)
+    assert all(0 <= b - a <= 1 for a, b in steps)
+
+
+def test_a_rescue_is_charged_to_the_mailbox_that_sent_it(monkeypatch) -> None:
+    fake = _FakeImap({"9": "Message-ID: <x>"})
+
+    def search(client, folder, senders, *, unseen_only=False):
+        return ["9"] if folder != "INBOX" and not unseen_only else []
+
+    monkeypatch.setattr(warmup, "_connect", lambda *_a, **_k: fake)
+    monkeypatch.setattr(warmup, "_search_warmup", search)
+    monkeypatch.setattr(warmup, "_from_of", lambda _c, _u: "sales@arslanvuzmallone.com")
+    me = pool(*THREE)[0]
+
+    rescued, *_rest, rescued_from = warmup._tend_blocking(
+        me, senders=list(THREE), timeout=5, reply_share=0.0, seed="x"
+    )
+
+    assert rescued >= 1
+    assert set(rescued_from) == {"sales@arslanvuzmallone.com"}
+
+
+def test_the_report_counts_each_mailbox_on_its_own() -> None:
+    report = warmup.WarmupReport()
+    report.count("Sales@ArslanVuzmallone.com", "sent")
+    report.count("sales@arslanvuzmallone.com", "rescued")
+    report.count("me@arslanvuzmallone.com", "replied", 0)
+    assert report.by_mailbox == {
+        "sales@arslanvuzmallone.com": {
+            "sent": 1,
+            "received": 0,
+            "rescued": 1,
+            "replied": 0,
+        }
+    }
