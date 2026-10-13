@@ -17,6 +17,7 @@ import uuid
 from typing import Annotated, Any, TypeVar
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from coldops.api import audit
@@ -908,6 +909,104 @@ async def decide_draft(
         )
         await session.flush()
         return ApprovalOut.model_validate(approval)
+
+
+class BulkApprovalItem(BaseModel):
+    draft_id: uuid.UUID
+    #: The version shown on the operator's screen, exactly as for one approval.
+    draft_version: int
+
+
+class BulkApprovalRequest(BaseModel):
+    drafts: list[BulkApprovalItem] = Field(min_length=1, max_length=500)
+
+
+class BulkApprovalOut(BaseModel):
+    approved: int
+    skipped: list[str]
+
+
+@router.post(
+    "/drafts/approve-all",
+    response_model=BulkApprovalOut,
+    tags=["approvals"],
+)
+async def approve_drafts(
+    payload: BulkApprovalRequest,
+    request: Request,
+    principal: Principal = Depends(require("approval:decide")),
+) -> BulkApprovalOut:
+    """Approve every draft the operator was shown, in one decision.
+
+    The same rules as one approval, applied to each: the version must be the
+    one on screen, the draft must still be waiting and must have passed
+    validation, and each approval records the content approved and is
+    audited. A draft that fails any of them is skipped and named, never
+    approved on a guess.
+    """
+    approved = 0
+    skipped: list[str] = []
+    now = dt.datetime.now(dt.UTC)
+    async with workspace_unit_of_work(principal.workspace_id) as session:
+        for item in payload.drafts:
+            draft = await session.get(MessageDraft, item.draft_id)
+            if draft is None:
+                skipped.append(f"{item.draft_id}: not found")
+                continue
+            if draft.version != item.draft_version:
+                skipped.append(f"{item.draft_id}: changed since it was shown")
+                continue
+            if draft.status not in (DraftStatus.AWAITING_APPROVAL, DraftStatus.GENERATED):
+                skipped.append(f"{item.draft_id}: already {draft.status.value}")
+                continue
+            if not draft.validation_passed:
+                skipped.append(f"{item.draft_id}: failed message validation")
+                continue
+            seq = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(MessageApproval)
+                    .where(
+                        MessageApproval.draft_id == draft.id,
+                        MessageApproval.draft_version == draft.version,
+                    )
+                )
+                or 0
+            )
+            session.add(
+                MessageApproval(
+                    workspace_id=principal.workspace_id,
+                    draft_id=draft.id,
+                    draft_version=draft.version,
+                    decision_seq=seq + 1,
+                    decision="approved",
+                    decided_by=principal.user_id,
+                    decided_at=now,
+                    reason="approved with every other draft on the page",
+                    policy_snapshot={CONTENT_KEY: approval_content.of_draft(draft)},
+                    actor_ip=request.client.host if request.client else None,
+                    actor_user_agent=request.headers.get("user-agent", "")[:400] or None,
+                )
+            )
+            draft.status = DraftStatus.APPROVED
+            await audit.record(
+                session,
+                workspace_id=principal.workspace_id,
+                action="draft.decision",
+                resource_type="message_draft",
+                resource_id=str(draft.id),
+                actor_user_id=principal.user_id,
+                actor_ip=request.client.host if request.client else None,
+                request_id=_request_id(request),
+                detail={
+                    "decision": "approved",
+                    "draft_version": item.draft_version,
+                    "bulk": True,
+                },
+            )
+            approved += 1
+        await session.flush()
+    return BulkApprovalOut(approved=approved, skipped=skipped[:50])
 
 
 # ==========================================================================

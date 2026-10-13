@@ -871,6 +871,12 @@ export const api = {
   drafts: (t: string, status?: string, limit = 100) =>
     call<Page<Draft>>(`/api/v1/drafts${query({ status, limit })}`, { token: t }),
   draft: (t: string, id: string) => call<Draft>(`/api/v1/drafts/${id}`, { token: t }),
+  approveAll: (t: string, drafts: { draft_id: string; draft_version: number }[]) =>
+    call<{ approved: number; skipped: string[] }>('/api/v1/drafts/approve-all', {
+      token: t,
+      method: 'POST',
+      body: { drafts },
+    }),
   decide: (
     t: string,
     id: string,

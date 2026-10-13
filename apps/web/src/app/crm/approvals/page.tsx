@@ -248,7 +248,11 @@ export default function ApprovalsPage() {
 
   // Fetched once and shared by every card: it is one file, and 449 cards each
   // pulling 105 KB to show the same document would be a self-inflicted DoS.
-  const { token } = useSession();
+  const { token, can } = useSession();
+  const [bulk, setBulk] = useState<{ busy: boolean; note: string | null }>({
+    busy: false,
+    note: null,
+  });
   const [attachmentUrl, setAttachmentUrl] = useState<string | undefined>();
   useEffect(() => {
     if (!token || !attachmentQuery.data?.enabled) return;
@@ -286,6 +290,44 @@ export default function ApprovalsPage() {
           you read; if the draft changes before you decide, the API refuses the
           stale approval.
         </p>
+        {data && data.items.length > 0 && can('approval:decide') ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={bulk.busy}
+              onClick={async () => {
+                if (!token) return;
+                const n = data.items.length;
+                if (
+                  !window.confirm(
+                    `Approve all ${n} drafts shown here? Each goes out when sending is switched on.`,
+                  )
+                )
+                  return;
+                setBulk({ busy: true, note: null });
+                try {
+                  const out = await api.approveAll(
+                    token,
+                    data.items.map((d) => ({ draft_id: d.id, draft_version: d.version })),
+                  );
+                  setBulk({
+                    busy: false,
+                    note:
+                      `Approved ${out.approved}.` +
+                      (out.skipped.length ? ` Skipped ${out.skipped.length}: ${out.skipped.slice(0, 3).join('; ')}` : ''),
+                  });
+                  reload();
+                } catch (e) {
+                  setBulk({ busy: false, note: e instanceof Error ? e.message : String(e) });
+                }
+              }}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            >
+              {bulk.busy ? 'Approving…' : `Approve all ${data.items.length}`}
+            </button>
+            {bulk.note ? <span className="text-sm text-slate-600">{bulk.note}</span> : null}
+          </div>
+        ) : null}
       </div>
 
       {error ? (
