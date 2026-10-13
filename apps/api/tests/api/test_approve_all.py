@@ -72,7 +72,9 @@ async def test_what_was_shown_is_approved_and_the_rest_is_named(
 
 @pytest.mark.asyncio
 async def test_approve_all_needs_the_right_to_approve(
-    client, db_session, workspace
+    client,  # noqa: F811
+    db_session,
+    workspace,
 ) -> None:
     ids = await seed_campaign_and_draft(workspace, tag="bulk-viewer")
     _, email = await make_member(workspace, WorkspaceRole.RESEARCHER, tag="bulk-viewer")
