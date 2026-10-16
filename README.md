@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ TITAN-OS (ColdOps)
+# ⚡ ColdOps
 ### *The Sovereign, Evidence-First Autonomous Sales Intelligence & Controlled Outreach Engine*
 
 [![Production Status](https://img.shields.io/badge/Status-v0.2.0%20Hardened-0ea5e9?style=for-the-badge&logo=rocket&logoColor=white)](docs/audits/FINAL-PRODUCTION-VERIFICATION.md)
@@ -18,7 +18,7 @@
 
 <br/>
 
-> **"Titan-OS observes before it pitches, proves before it claims, and refuses to send when it cannot show its working."**  
+> **"ColdOps observes before it pitches, proves before it claims, and refuses to send when it cannot show its working."**  
 > *A generative model can draft a message; only an isolated transactional outbox worker can deliver one, and only after every deterministic gate has passed.*
 
 ---
@@ -29,11 +29,11 @@
 
 ## 🌟 Executive Overview
 
-**Titan-OS (ColdOps)** is an enterprise autonomous sales intelligence and controlled outreach operating system engineered to eliminate hallucinated claims, unauthorized emails, deliverability burning, and silent multi-send loops. 
+**ColdOps** is an enterprise autonomous sales intelligence and controlled outreach operating system engineered to eliminate hallucinated claims, unauthorized emails, deliverability burning, and silent multi-send loops. 
 
 Traditional AI outreach platforms wire LLMs directly to email APIs. When a model hallucinates a customer fact or misfires an outreach trigger, companies suffer severe domain reputation degradation, CAN-SPAM violations, and legal liability. 
 
-Titan-OS operates on a **zero-trust, evidence-first substrate**:
+ColdOps operates on a **zero-trust, evidence-first substrate**:
 1. **No Evidence, No Claim**: Every single assertion in an outreach message must trace through an immutable claim map to an SHA-256 verified DOM snapshot captured by an isolated browser.
 2. **Zero Direct Send Architecture**: Models **cannot** send mail. Email delivery credentials are mathematically isolated behind an atomic, transactional outbox worker. An AST static-analysis scanner runs in CI to guarantee that no module outside the outbox worker ever imports an email client.
 3. **Four Independent Physical Gates**: Process kill switch, tenant workspace authorization, SPF/DKIM/DMARC preflight acknowledgement, and physical sender identity validation.
@@ -43,7 +43,7 @@ Titan-OS operates on a **zero-trust, evidence-first substrate**:
 
 ## 🏛️ System Architecture
 
-Titan-OS enforces strict microservice isolation, preventing arbitrary code or browser escapes from compromising outreach credentials or tenant databases.
+ColdOps enforces strict microservice isolation, preventing arbitrary code or browser escapes from compromising outreach credentials or tenant databases.
 
 ```mermaid
 flowchart TD
@@ -100,7 +100,7 @@ flowchart TD
 
 ## 🚦 Subsystem Implementation Status
 
-Titan-OS strictly adheres to empirical status classification. **Live-verified** indicates authentic credentialed execution with real external services.
+ColdOps strictly adheres to empirical status classification. **Live-verified** indicates authentic credentialed execution with real external services.
 
 | Subsystem / Component | Technical Implementation | Verified State |
 |:---|:---|:---:|
@@ -124,7 +124,7 @@ Titan-OS strictly adheres to empirical status classification. **Live-verified** 
 
 ## 🛡️ The 22 Safety Invariants
 
-Titan-OS implements 22 non-negotiable architectural safety invariants. Static AST analyzers and continuous integration suites enforce these invariants against every pull request:
+ColdOps implements 22 non-negotiable architectural safety invariants. Static AST analyzers and continuous integration suites enforce these invariants against every pull request:
 
 <details open>
 <summary><b>Click to expand the 22 Invariant Safeguards</b></summary>
