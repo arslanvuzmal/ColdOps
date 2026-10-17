@@ -162,7 +162,7 @@ def test_the_peak_window_excludes_today() -> None:
     from coldops.delivery import outbox_worker
 
     gate = inspect.getsource(outbox_worker.OutboxWorker._check_deliverability)
-    peak_query = gate[gate.index("recent_peak_sends = (") :]
+    peak_query = gate[gate.index("recent_peak_sends = bounding_peak(") :]
 
     assert "today_start" in peak_query
     assert "sent_at < :today_start" in peak_query
@@ -179,3 +179,17 @@ def test_the_bound_is_stable_as_the_day_is_consumed() -> None:
     allowance = stepped(13, yesterdays_peak)
     for _sent_so_far in range(allowance):
         assert stepped(13, yesterdays_peak) == allowance
+
+
+def test_a_mailbox_resuming_from_nothing_starts_small_not_at_its_age() -> None:
+    """19 Oct 2026: two weeks of warm-up only, then cold mail switched back on.
+    Its age allows about fifteen a day; it starts at six and doubles."""
+    from coldops.delivery.outbox_worker import RESTART_PEAK_SENDS, bounding_peak
+
+    assert bounding_peak(None) == RESTART_PEAK_SENDS == 3
+    assert stepped(10, bounding_peak(None)) == 6
+    assert stepped(11, 6) == 12
+    # A real, higher peak still counts; a measured one or two is not a penalty
+    # below what a restart would be credited with.
+    assert bounding_peak(20) == 20
+    assert bounding_peak(1) == 3

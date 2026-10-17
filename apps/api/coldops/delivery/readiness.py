@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import math
 import uuid
 from collections import defaultdict
 
@@ -208,7 +209,9 @@ async def assess(
                 probes=sum(n for _, n in days.values()),
                 days_measured=len(days),
                 ramp_day=deliverability.warmup_day(start, now),
-                cold_limit_today=limit if limit is not None else s.daily_send_limit,
+                cold_limit_today=_first_day(
+                    limit if limit is not None else s.daily_send_limit, s.is_active
+                ),
                 daily_limit=s.daily_send_limit,
                 problems=tuple(problems),
             )
@@ -257,3 +260,15 @@ __all__ = [
     "Readiness",
     "assess",
 ]
+
+
+def _first_day(limit: int, switched_on: bool) -> int:
+    """What a switched-off mailbox may send on its first day back, not what its
+    age alone would allow: it has sent no cold mail lately, so the outbox bounds
+    it by the restart credit (see ``outbox_worker.RESTART_PEAK_SENDS``)."""
+    if switched_on:
+        return limit
+    from coldops.delivery.deliverability import MAX_DAILY_STEP_UP
+    from coldops.delivery.outbox_worker import RESTART_PEAK_SENDS
+
+    return min(limit, math.ceil(RESTART_PEAK_SENDS * MAX_DAILY_STEP_UP))

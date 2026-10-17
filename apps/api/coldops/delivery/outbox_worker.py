@@ -370,6 +370,25 @@ class ProcessResult:
 #: volume it sent a fortnight ago.
 WARMUP_PEAK_WINDOW_DAYS = 7
 
+#: The busiest day a mailbox is credited with when it sent no cold mail at all
+#: in the window, so its first day back is at most twice this.
+#:
+#: Treating "nothing sent" as "no bound" handed a mailbox resuming after a pause
+#: its whole age-based allowance at once: on the 19 Oct 2026 restart, after two
+#: weeks of warm-up only, that was about fifteen cold messages each on day one
+#: from zero -- the jump this bound exists to prevent. Three keeps a resumed
+#: mailbox sending (six, then twelve, then twenty-four) so a quarantined one
+#: still works its way back out within days.
+RESTART_PEAK_SENDS = 3
+
+
+def bounding_peak(measured: int | None) -> int:
+    """The recent peak today's allowance may double: what was measured, or the
+    restart credit when the mailbox sent nothing in the window."""
+    return (
+        RESTART_PEAK_SENDS if measured is None else max(int(measured), RESTART_PEAK_SENDS)
+    )
+
 
 def _ramp_start(
     first_send: dt.datetime | None, warmup_started_at: dt.datetime | None
@@ -1458,32 +1477,31 @@ class OutboxWorker:
         # full ramp allowance in a single burst -- exactly the jump the bound
         # exists to prevent, produced by the bound.
         #
-        # None when nothing was sent in the window: "no evidence", not
-        # "evidence of zero". A mailbox quarantined for a week by the
-        # reputation gate must not also be throttled to the floor by its own
-        # quarantine, or it could never send its way back out.
-        recent_peak_sends = (
-            await session.execute(
-                text(
-                    "SELECT max(c) FROM ("
-                    "  SELECT count(*) AS c FROM messages"
-                    "  WHERE workspace_id = :workspace"
-                    "    AND sender_identity_id = :sender"
-                    "    AND sent_at >= :since"
-                    "    AND sent_at < :today_start"
-                    "  GROUP BY (sent_at AT TIME ZONE 'UTC')::date"
-                    ") d"
-                ),
-                {
-                    "workspace": row.workspace_id,
-                    "sender": row.sender_identity_id,
-                    "since": now - dt.timedelta(days=WARMUP_PEAK_WINDOW_DAYS),
-                    "today_start": dt.datetime.combine(
-                        now.date(), dt.time.min, tzinfo=dt.UTC
+        # Nothing sent in the window is not "no bound": see RESTART_PEAK_SENDS.
+        recent_peak_sends = bounding_peak(
+            (
+                await session.execute(
+                    text(
+                        "SELECT max(c) FROM ("
+                        "  SELECT count(*) AS c FROM messages"
+                        "  WHERE workspace_id = :workspace"
+                        "    AND sender_identity_id = :sender"
+                        "    AND sent_at >= :since"
+                        "    AND sent_at < :today_start"
+                        "  GROUP BY (sent_at AT TIME ZONE 'UTC')::date"
+                        ") d"
                     ),
-                },
-            )
-        ).scalar_one_or_none()
+                    {
+                        "workspace": row.workspace_id,
+                        "sender": row.sender_identity_id,
+                        "since": now - dt.timedelta(days=WARMUP_PEAK_WINDOW_DAYS),
+                        "today_start": dt.datetime.combine(
+                            now.date(), dt.time.min, tzinfo=dt.UTC
+                        ),
+                    },
+                )
+            ).scalar_one_or_none()
+        )
 
         sent_today = int(
             (
