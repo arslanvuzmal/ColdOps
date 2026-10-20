@@ -107,6 +107,7 @@ ignore = [
 "coldops/seed.py" = ["T20"]  # operator script; printing is the interface
 "coldops/provision_markets.py" = ["T20"]  # likewise
 "coldops/provision_smartlead.py" = ["T20"]  # likewise
+"coldops/import_leads.py" = ["T20"]  # likewise
 "coldops/provision_senders.py" = ["T20"]  # likewise
 "coldops/backfill_timezones.py" = ["T20"]  # likewise
 
