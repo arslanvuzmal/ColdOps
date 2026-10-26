@@ -25,7 +25,10 @@ from titan.db.models import SenderIdentity, Workspace
 
 from tests.delivery.conftest import build_sendable
 
-NOW = dt.datetime(2026, 8, 15, 12, 0, tzinfo=dt.UTC)
+# Relative to the real clock, not a fixed date: sender verification expires
+# against wall time (``sender_auth.MAX_VERIFICATION_AGE``), so a hard-coded
+# "now" turns every fixture mailbox stale once that window has passed.
+NOW = dt.datetime.now(dt.UTC).replace(hour=12, minute=0, second=0, microsecond=0)
 
 
 async def _clone_sender(session, workspace_id, source_id: uuid.UUID, label: str):
